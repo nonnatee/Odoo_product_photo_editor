@@ -191,7 +191,7 @@ class ImagePipeline:
         cutout_w, cutout_h = rgba_cutout.size
         scale = min(avail_w / max(cutout_w, 1), avail_h / max(cutout_h, 1))
         new_cutout_w = max(1, int(cutout_w * scale))
-        new_cutout_h = max(1, int(cutout_w * scale))
+        new_cutout_h = max(1, int(cutout_h * scale))
 
         resized_cutout = rgba_cutout.resize((new_cutout_w, new_cutout_h), Image.Resampling.LANCZOS)
         steps_applied.append(f"Standardized cutout to {new_cutout_w}x{new_cutout_h} (Canvas: {final_w}x{final_h}, Padding: {padding_percent}%)")

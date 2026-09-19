@@ -284,5 +284,5 @@ class ProductPhotoEditorController(http.Controller):
         return Response(
             json.dumps(payload),
             status=status,
-            mimetype='application/json;charset=utf-8',
+            content_type='application/json; charset=utf-8',
         )

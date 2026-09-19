@@ -28,7 +28,7 @@ class ProductTemplate(models.Model):
             groupby=['product_id'],
             aggregates=['__count'],
         )
-        counts = {product.id if hasattr(product, 'id') else product: count for product, count in job_data}
+        counts = {product.id: count for product, count in job_data}
         for template in self:
             template.photo_editor_count = counts.get(template.id, 0)
 
