@@ -75,7 +75,15 @@ class ProductTemplate(models.Model):
         if not action:
             act_rec = self.env['ir.actions.act_window'].search([('res_model', '=', 'product.photo.editor')], limit=1)
             if act_rec:
-                action = act_rec.read()[0]
+                action = {
+                    'name': act_rec.name,
+                    'type': act_rec.type,
+                    'res_model': act_rec.res_model,
+                    'view_mode': act_rec.view_mode,
+                    'domain': act_rec.domain,
+                    'context': act_rec.context,
+                    'id': act_rec.id,
+                }
             else:
                 action = {
                     'name': _('Photo Editor Jobs'),
