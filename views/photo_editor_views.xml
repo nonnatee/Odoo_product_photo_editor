@@ -132,12 +132,11 @@
                 <filter string="Failed" name="filter_failed" domain="[('status', '=', 'failed')]"/>
                 <filter string="Applied to Product" name="filter_applied" domain="[('applied_to_product', '=', True)]"/>
                 <filter string="Not Applied" name="filter_not_applied" domain="[('applied_to_product', '=', False)]"/>
-                <group expand="0" string="Group By">
-                    <filter string="Product" name="group_by_product" context="{'group_by': 'product_id'}"/>
-                    <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
-                    <filter string="AI Provider" name="group_by_provider" context="{'group_by': 'service_provider'}"/>
-                    <filter string="Background Style" name="group_by_bg" context="{'group_by': 'background_style'}"/>
-                </group>
+                <separator/>
+                <filter string="Product" name="group_by_product" context="{'group_by': 'product_id'}"/>
+                <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
+                <filter string="AI Provider" name="group_by_provider" context="{'group_by': 'service_provider'}"/>
+                <filter string="Background Style" name="group_by_bg" context="{'group_by': 'background_style'}"/>
             </search>
         </field>
     </record>
