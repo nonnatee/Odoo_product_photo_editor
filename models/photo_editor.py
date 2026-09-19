@@ -19,15 +19,52 @@ from .image_pipeline import ImagePipeline, ImagePipelineError
 _logger = logging.getLogger(__name__)
 
 
+
+# Known image format magic bytes (first bytes of the file)
+_IMAGE_MAGIC = (
+    b'\x89PNG',          # PNG
+    b'\xff\xd8\xff',     # JPEG
+    b'RIFF',             # WEBP (RIFF....WEBP)
+    b'GIF8',             # GIF
+    b'BM',               # BMP
+    b'\x00\x00\x01\x00', # ICO
+)
+
+
 def _safe_b64decode(data):
-    """Safely decode base64 string or bytes, stripping data URI headers and whitespace."""
+    """Safely decode base64 string or bytes, stripping data URI headers and whitespace.
+
+    In Odoo 19, fields.Binary / fields.Image return raw bytes from the ORM.
+    This function detects whether the data is already raw image bytes (via magic
+    byte signatures) and skips base64 decoding in that case.
+    """
     if not data:
         return b''
+
+    # Normalise to bytes first so we can inspect magic bytes
     if isinstance(data, str):
-        data = data.encode('ascii')
-    if b',' in data:
-        data = data.split(b',', 1)[1]
-    return base64.b64decode(data.strip())
+        # Strip data URI prefix (e.g. "data:image/png;base64,...")
+        if ',' in data:
+            data = data.split(',', 1)[1]
+        data = data.strip().encode('ascii')
+    elif isinstance(data, bytes):
+        if b',' in data[:64]:            # data URI in bytes form
+            data = data.split(b',', 1)[1]
+        data = data.strip()
+    else:
+        return b''
+
+    # If the bytes are already raw image data, return them as-is
+    for magic in _IMAGE_MAGIC:
+        if data[:len(magic)] == magic:
+            return data
+
+    # Otherwise assume base64-encoded and decode
+    try:
+        return base64.b64decode(data)
+    except Exception:
+        # Last resort: return as-is (lets PIL give a descriptive error)
+        return data
 
 
 class ProductPhotoEditor(models.Model):
