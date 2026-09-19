@@ -6,14 +6,17 @@
         <field name="model">product.template</field>
         <field name="inherit_id" ref="product.product_template_only_form_view"/>
         <field name="arch" type="xml">
-            <!-- Header button for one-click editing -->
-            <xpath expr="//header" position="inside">
-                <button name="action_open_photo_editor_wizard"
-                        string="✨ AI Photo Editor"
-                        type="object"
-                        class="btn btn-secondary"
-                        icon="fa-magic"
-                        help="Launch AI photo optimization wizard to remove background, correct perspective, and standardize catalog images."/>
+            <!-- Header button for one-click editing:
+                 In Odoo 19, product.template form has no <header> element.
+                 We inject one before <sheet> instead. -->
+            <xpath expr="//sheet" position="before">
+                <header>
+                    <button name="action_open_photo_editor_wizard"
+                            string="✨ AI Photo Editor"
+                            type="object"
+                            class="btn-primary"
+                            help="Launch AI photo optimization wizard to remove background, correct perspective, and standardize catalog images."/>
+                </header>
             </xpath>
 
             <!-- Smart Button in Button Box -->
