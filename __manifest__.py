@@ -22,8 +22,8 @@ Key Features:
 * **REST API Endpoints**: Full API integration for automated external pipelines.
     """,
     'category': 'Website/eCommerce',
-    'author': 'AI Solutions',
-    'website': 'https://github.com/custom_addons/product_editor',
+    'author': 'Nonnatee Kanjana',
+    'website': 'https://github.com/nonnatee/Odoo_product_photo_editor',
     'license': 'LGPL-3',
     'depends': [
         'base',
