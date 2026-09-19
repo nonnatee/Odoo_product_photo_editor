@@ -130,7 +130,6 @@
                 <filter string="Pending Queue" name="filter_pending" domain="[('status', '=', 'pending')]"/>
                 <filter string="Completed" name="filter_done" domain="[('status', '=', 'done')]"/>
                 <filter string="Failed" name="filter_failed" domain="[('status', '=', 'failed')]"/>
-                <separator/>
                 <filter string="Applied to Product" name="filter_applied" domain="[('applied_to_product', '=', True)]"/>
                 <filter string="Not Applied" name="filter_not_applied" domain="[('applied_to_product', '=', False)]"/>
                 <group expand="0" string="Group By">
