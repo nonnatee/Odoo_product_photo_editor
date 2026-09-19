@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <!-- Sequence for Product Photo Editor Jobs -->
+        <record id="seq_product_photo_editor" model="ir.sequence">
+            <field name="name">Product Photo Editor Sequence</field>
+            <field name="code">product.photo.editor</field>
+            <field name="prefix">PPE-%(year)s%(month)s-</field>
+            <field name="padding">4</field>
+            <field name="company_id" eval="False"/>
+        </record>
+
+        <!-- Default System Parameters -->
+        <record id="param_default_provider" model="ir.config_parameter">
+            <field name="key">product_photo_editor.default_provider</field>
+            <field name="value">local</field>
+        </record>
+        <record id="param_default_background_style" model="ir.config_parameter">
+            <field name="key">product_photo_editor.default_background_style</field>
+            <field name="value">white</field>
+        </record>
+        <record id="param_default_dimensions" model="ir.config_parameter">
+            <field name="key">product_photo_editor.default_dimensions</field>
+            <field name="value">square_2000</field>
+        </record>
+        <record id="param_auto_apply_cron" model="ir.config_parameter">
+            <field name="key">product_photo_editor.auto_apply_cron</field>
+            <field name="value">True</field>
+        </record>
+        <record id="param_cron_batch_size" model="ir.config_parameter">
+            <field name="key">product_photo_editor.cron_batch_size</field>
+            <field name="value">25</field>
+        </record>
+
+        <!-- Multi-Record Action for Bulk Optimization from Product List View -->
+        <record id="action_server_batch_photo_editor" model="ir.actions.server">
+            <field name="name">✨ Bulk AI Photo Optimization</field>
+            <field name="model_id" ref="product.model_product_template"/>
+            <field name="binding_model_id" ref="product.model_product_template"/>
+            <field name="binding_view_types">list</field>
+            <field name="state">code</field>
+            <field name="code">
+action = records.action_batch_photo_editor()
+            </field>
+        </record>
+    </data>
+</odoo>

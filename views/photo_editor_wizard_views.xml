@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_product_photo_editor_wizard_form" model="ir.ui.view">
+        <field name="name">product.photo.editor.wizard.form</field>
+        <field name="model">product.photo.editor.wizard</field>
+        <field name="arch" type="xml">
+            <form string="AI Product Photo Editor">
+                <sheet>
+                    <div class="row">
+                        <!-- Left Configuration Column -->
+                        <div class="col-lg-6 col-md-12 border-end pe-4">
+                            <h4 class="mb-3">1. Upload &amp; Select Presets</h4>
+                            <group>
+                                <field name="product_id" readonly="1"/>
+                                <field name="product_variant_id" options="{'no_create': True}" invisible="not product_id"/>
+                                <field name="image_original" widget="image" class="oe_avatar" style="width: 220px; height: 220px; object-fit: contain;"/>
+                            </group>
+
+                            <group string="AI Engine &amp; Style">
+                                <field name="service_provider"/>
+                                <field name="background_style"/>
+                                <field name="custom_bg_color" invisible="background_style != 'custom_color'"/>
+                                <field name="dimensions"/>
+                                <field name="target_width" invisible="dimensions != 'original'"/>
+                                <field name="target_height" invisible="dimensions != 'original'"/>
+                                <field name="padding_percent"/>
+                            </group>
+
+                            <group string="Output Format &amp; Enhancements">
+                                <field name="export_format"/>
+                                <field name="export_quality"/>
+                                <field name="apply_perspective"/>
+                                <field name="apply_color_correction"/>
+                                <field name="apply_auto_white_balance" invisible="not apply_color_correction"/>
+                                <field name="apply_contrast_enhancement" invisible="not apply_color_correction"/>
+                                <field name="apply_sharpening" invisible="not apply_color_correction"/>
+                            </group>
+                        </div>
+
+                        <!-- Right Live Preview Pane -->
+                        <div class="col-lg-6 col-md-12 ps-4 d-flex flex-column align-items-center justify-content-center">
+                            <h4 class="mb-3 align-self-start">2. Real-Time Preview</h4>
+                            <div class="p-3 border rounded shadow-sm bg-light d-flex flex-column align-items-center justify-content-center" style="min-height: 420px; width: 100%;">
+                                <field name="preview_image" widget="image" style="max-width: 380px; max-height: 380px; object-fit: contain;" readonly="1"/>
+                                <div class="text-muted mt-3 small text-center" invisible="preview_image">
+                                    <i class="fa fa-info-circle me-1"/> Click <strong>"Generate Preview"</strong> below to view the optimized cutout and background composition.
+                                </div>
+                                <div class="mt-2 fw-bold text-success text-center small" invisible="not preview_info">
+                                    <field name="preview_info" readonly="1"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </sheet>
+                <footer>
+                    <button name="action_generate_preview" string="⚡ Generate Preview" type="object" class="btn btn-secondary"/>
+                    <button name="action_apply_and_close" string="✓ Apply to Product" type="object" class="btn btn-primary"/>
+                    <button name="action_queue_background_job" string="⏱ Queue for Batch" type="object" class="btn btn-info"/>
+                    <button string="Discard" class="btn btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Wizard Action Window -->
+    <record id="action_product_photo_editor_wizard" model="ir.actions.act_window">
+        <field name="name">AI Photo Editor Wizard</field>
+        <field name="res_model">product.photo.editor.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+</odoo>

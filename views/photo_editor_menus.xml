@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Top-level Application Menu -->
+    <menuitem id="menu_product_photo_editor_root"
+              name="Photo Editor"
+              sequence="75"/>
+
+    <!-- Operations Submenu -->
+    <menuitem id="menu_product_photo_editor_operations"
+              name="Operations"
+              parent="menu_product_photo_editor_root"
+              sequence="10"/>
+
+    <menuitem id="menu_product_photo_editor_jobs"
+              name="All Editing Jobs"
+              parent="menu_product_photo_editor_operations"
+              action="action_product_photo_editor"
+              sequence="10"/>
+
+    <menuitem id="menu_product_photo_editor_pending"
+              name="Batch Pending Queue"
+              parent="menu_product_photo_editor_operations"
+              action="action_product_photo_editor_pending"
+              sequence="20"/>
+
+    <!-- Configuration Submenu -->
+    <menuitem id="menu_product_photo_editor_config"
+              name="Configuration"
+              parent="menu_product_photo_editor_root"
+              groups="group_photo_editor_manager"
+              sequence="90"/>
+
+    <menuitem id="menu_product_photo_editor_settings"
+              name="Settings"
+              parent="menu_product_photo_editor_config"
+              action="action_product_photo_editor_settings"
+              sequence="10"/>
+</odoo>

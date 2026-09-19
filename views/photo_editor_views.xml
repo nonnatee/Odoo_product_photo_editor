@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- List View (Odoo 18/19 standard: <list>) -->
+    <record id="view_product_photo_editor_list" model="ir.ui.view">
+        <field name="name">product.photo.editor.list</field>
+        <field name="model">product.photo.editor</field>
+        <field name="arch" type="xml">
+            <list string="Photo Editor Jobs"
+                  decoration-success="status == 'done'"
+                  decoration-warning="status == 'pending'"
+                  decoration-danger="status == 'failed'"
+                  decoration-info="status == 'processing'">
+                <field name="name"/>
+                <field name="product_id"/>
+                <field name="service_provider"/>
+                <field name="background_style"/>
+                <field name="dimensions"/>
+                <field name="export_format"/>
+                <field name="duration_sec" widget="float_time" optional="show"/>
+                <field name="applied_to_product" widget="boolean_toggle"/>
+                <field name="status" widget="badge"
+                       decoration-success="status == 'done'"
+                       decoration-warning="status == 'pending'"
+                       decoration-danger="status == 'failed'"
+                       decoration-info="status == 'processing'"/>
+                <field name="create_date" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View -->
+    <record id="view_product_photo_editor_form" model="ir.ui.view">
+        <field name="name">product.photo.editor.form</field>
+        <field name="model">product.photo.editor</field>
+        <field name="arch" type="xml">
+            <form string="Product Photo Editor">
+                <header>
+                    <button name="action_process" string="⚡ Process Now" type="object" class="btn-primary" invisible="status in ('processing', 'done')"/>
+                    <button name="action_apply_to_product" string="✓ Apply to Product" type="object" class="btn-success" invisible="status != 'done' or applied_to_product"/>
+                    <button name="action_open_wizard" string="⚙ Adjust in Wizard" type="object" class="btn-secondary"/>
+                    <button name="action_queue_pending" string="Queue for Batch" type="object" class="btn-info" invisible="status not in ('draft', 'failed')"/>
+                    <button name="action_reset_draft" string="Reset to Draft" type="object" invisible="status not in ('done', 'failed')"/>
+                    <field name="status" widget="statusbar" statusbar_visible="draft,pending,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name" string="Job Reference"/>
+                        <h1><field name="name"/></h1>
+                        <group>
+                            <field name="product_id" options="{'no_create': True}"/>
+                            <field name="product_variant_id" options="{'no_create': True}" invisible="not product_id"/>
+                        </group>
+                    </div>
+
+                    <!-- Visual Comparison Grid -->
+                    <group string="Before &amp; After Comparison">
+                        <group string="Original Raw Photo">
+                            <field name="image_original" widget="image" class="oe_avatar" style="width: 280px; height: 280px; object-fit: contain;"/>
+                            <field name="original_width"/>
+                            <field name="original_height"/>
+                            <field name="original_file_size"/>
+                        </group>
+                        <group string="Optimized Marketplace Result">
+                            <field name="image_processed" widget="image" class="oe_avatar" style="width: 280px; height: 280px; object-fit: contain;" readonly="1"/>
+                            <field name="processed_width"/>
+                            <field name="processed_height"/>
+                            <field name="processed_file_size"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="AI Pipeline &amp; Presets" name="pipeline_presets">
+                            <group>
+                                <group string="Background &amp; Dimensions">
+                                    <field name="service_provider"/>
+                                    <field name="background_style"/>
+                                    <field name="custom_bg_color" invisible="background_style != 'custom_color'"/>
+                                    <field name="dimensions"/>
+                                    <field name="target_width" invisible="dimensions != 'original'"/>
+                                    <field name="target_height" invisible="dimensions != 'original'"/>
+                                    <field name="padding_percent"/>
+                                </group>
+                                <group string="Color, Perspective &amp; Export">
+                                    <field name="export_format"/>
+                                    <field name="export_quality"/>
+                                    <field name="apply_perspective"/>
+                                    <field name="apply_color_correction"/>
+                                    <field name="apply_auto_white_balance" invisible="not apply_color_correction"/>
+                                    <field name="apply_contrast_enhancement" invisible="not apply_color_correction"/>
+                                    <field name="apply_sharpening" invisible="not apply_color_correction"/>
+                                </group>
+                            </group>
+                        </page>
+
+                        <page string="Sync &amp; Performance" name="sync_performance">
+                            <group>
+                                <group string="Product Catalog Sync">
+                                    <field name="applied_to_product"/>
+                                    <field name="applied_date"/>
+                                    <field name="company_id" groups="base.group_multi_company"/>
+                                </group>
+                                <group string="Performance Metrics">
+                                    <field name="duration_sec"/>
+                                    <field name="active"/>
+                                </group>
+                            </group>
+                            <group string="Transformation Pipeline Steps" invisible="not transformation_log">
+                                <field name="transformation_log" nolabel="1"/>
+                            </group>
+                            <group string="Error Details" invisible="not error_message">
+                                <field name="error_message" nolabel="1" class="text-danger"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View -->
+    <record id="view_product_photo_editor_search" model="ir.ui.view">
+        <field name="name">product.photo.editor.search</field>
+        <field name="model">product.photo.editor</field>
+        <field name="arch" type="xml">
+            <search string="Search Photo Editor Jobs">
+                <field name="name"/>
+                <field name="product_id"/>
+                <field name="service_provider"/>
+                <filter string="Draft" name="filter_draft" domain="[('status', '=', 'draft')]"/>
+                <filter string="Pending Queue" name="filter_pending" domain="[('status', '=', 'pending')]"/>
+                <filter string="Completed" name="filter_done" domain="[('status', '=', 'done')]"/>
+                <filter string="Failed" name="filter_failed" domain="[('status', '=', 'failed')]"/>
+                <separator/>
+                <filter string="Applied to Product" name="filter_applied" domain="[('applied_to_product', '=', True)]"/>
+                <filter string="Not Applied" name="filter_not_applied" domain="[('applied_to_product', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Product" name="group_by_product" context="{'group_by': 'product_id'}"/>
+                    <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
+                    <filter string="AI Provider" name="group_by_provider" context="{'group_by': 'service_provider'}"/>
+                    <filter string="Background Style" name="group_by_bg" context="{'group_by': 'background_style'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Kanban View -->
+    <record id="view_product_photo_editor_kanban" model="ir.ui.view">
+        <field name="name">product.photo.editor.kanban</field>
+        <field name="model">product.photo.editor</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="status" sample="1">
+                <field name="id"/>
+                <field name="name"/>
+                <field name="product_id"/>
+                <field name="status"/>
+                <field name="image_processed"/>
+                <field name="image_original"/>
+                <field name="background_style"/>
+                <templates>
+                    <t t-name="card">
+                        <div class="oe_kanban_global_click d-flex flex-column justify-content-between">
+                            <div>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <strong class="o_kanban_record_title"><field name="name"/></strong>
+                                    <field name="status" widget="badge"
+                                           decoration-success="status == 'done'"
+                                           decoration-warning="status == 'pending'"
+                                           decoration-danger="status == 'failed'"/>
+                                </div>
+                                <div class="text-muted small mb-2"><field name="product_id"/></div>
+                                <div class="d-flex justify-content-center my-2">
+                                    <field name="image_processed" widget="image" class="oe_avatar" style="width: 140px; height: 140px; object-fit: contain;"/>
+                                </div>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mt-2 text-muted small">
+                                <span><field name="background_style"/></span>
+                                <span><field name="duration_sec"/>s</span>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <!-- Window Action (Odoo 18/19 standard: view_mode='list,kanban,form') -->
+    <record id="action_product_photo_editor" model="ir.actions.act_window">
+        <field name="name">Photo Editor Jobs</field>
+        <field name="res_model">product.photo.editor</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="search_view_id" ref="view_product_photo_editor_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create your first AI Product Photo Editor job!
+            </p>
+            <p>
+                Optimize raw product photos with background removal, perspective correction,
+                and marketplace dimension standardization.
+            </p>
+        </field>
+    </record>
+
+    <!-- Window Action for Pending Queue -->
+    <record id="action_product_photo_editor_pending" model="ir.actions.act_window">
+        <field name="name">Pending Batch Queue</field>
+        <field name="res_model">product.photo.editor</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="domain">[('status', '=', 'pending')]</field>
+        <field name="context">{'search_default_filter_pending': 1}</field>
+    </record>
+</odoo>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_photo_editor" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.photo.editor</field>
+        <field name="model">res.config.settings</field>
+        <field name="priority" eval="90"/>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="Product Photo Editor" string="Photo Editor" name="product_editor">
+                    <block title="AI Connectors &amp; Segmentation Engines" name="photo_editor_providers">
+                        <setting id="setting_default_provider" help="Choose default AI segmentation provider. Local Engine runs offline without API keys.">
+                            <field name="photo_editor_default_provider"/>
+                        </setting>
+                        <setting id="setting_remove_bg" title="Remove.bg API" help="API Key for remove.bg integration." invisible="photo_editor_default_provider != 'remove_bg'">
+                            <field name="photo_editor_remove_bg_api_key" password="True"/>
+                        </setting>
+                        <setting id="setting_clipdrop" title="Clipdrop API" help="API Key for Stability AI Clipdrop integration." invisible="photo_editor_default_provider != 'clipdrop'">
+                            <field name="photo_editor_clipdrop_api_key" password="True"/>
+                        </setting>
+                        <setting id="setting_photoroom" title="Photoroom API" help="API Key for Photoroom segmentation API." invisible="photo_editor_default_provider != 'photoroom'">
+                            <field name="photo_editor_photoroom_api_key" password="True"/>
+                        </setting>
+                        <setting id="setting_custom_webhook" title="Custom AI Inference Endpoint" help="Webhook URL and Authorization token for proprietary or self-hosted ONNX/Triton services." invisible="photo_editor_default_provider != 'custom_webhook'">
+                            <div class="content-group">
+                                <div class="row mt16">
+                                    <label for="photo_editor_custom_ai_endpoint_url" class="col-lg-3 o_light_label"/>
+                                    <field name="photo_editor_custom_ai_endpoint_url" placeholder="https://ai.example.com/segment"/>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="photo_editor_custom_ai_api_key" class="col-lg-3 o_light_label"/>
+                                    <field name="photo_editor_custom_ai_api_key" password="True"/>
+                                </div>
+                            </div>
+                        </setting>
+                    </block>
+
+                    <block title="Catalog Presets &amp; Marketplace Standardization" name="photo_editor_presets">
+                        <setting id="setting_default_style" help="Default background styling for new optimization jobs.">
+                            <field name="photo_editor_default_background_style"/>
+                        </setting>
+                        <setting id="setting_default_dimensions" help="Default output canvas dimensions (e.g. 2000x2000 for Amazon).">
+                            <field name="photo_editor_default_dimensions"/>
+                        </setting>
+                    </block>
+
+                    <block title="Batch Workflow &amp; Automation" name="photo_editor_cron">
+                        <setting id="setting_auto_apply" help="Automatically update product template image_1920 when background batch job completes.">
+                            <field name="photo_editor_auto_apply_cron"/>
+                        </setting>
+                        <setting id="setting_batch_size" help="Number of pending product images processed per scheduled cron cycle.">
+                            <field name="photo_editor_cron_batch_size"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Action for Photo Editor Settings -->
+    <record id="action_product_photo_editor_settings" model="ir.actions.act_window">
+        <field name="name">Settings</field>
+        <field name="res_model">res.config.settings</field>
+        <field name="view_mode">form</field>
+        <field name="target">inline</field>
+        <field name="context">{'module': 'product_editor'}</field>
+    </record>
+</odoo>

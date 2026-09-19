@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Inherit Product Template Form View -->
+    <record id="view_product_template_form_photo_editor" model="ir.ui.view">
+        <field name="name">product.template.form.photo.editor</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_only_form_view"/>
+        <field name="arch" type="xml">
+            <!-- Header button for one-click editing -->
+            <xpath expr="//header" position="inside">
+                <button name="action_open_photo_editor_wizard"
+                        string="✨ AI Photo Editor"
+                        type="object"
+                        class="btn btn-secondary"
+                        icon="fa-magic"
+                        help="Launch AI photo optimization wizard to remove background, correct perspective, and standardize catalog images."/>
+            </xpath>
+
+            <!-- Smart Button in Button Box -->
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button class="oe_stat_button"
+                        type="object"
+                        name="action_view_photo_editor_jobs"
+                        icon="fa-magic">
+                    <field string="Photo Edits" name="photo_editor_count" widget="statinfo"/>
+                </button>
+            </xpath>
+
+            <!-- Notebook Tab for Photo Edit History -->
+            <xpath expr="//notebook" position="inside">
+                <page string="AI Photo History" name="photo_editor_history">
+                    <field name="photo_editor_ids">
+                        <list decoration-success="status == 'done'" decoration-warning="status == 'pending'" decoration-danger="status == 'failed'">
+                            <field name="name"/>
+                            <field name="service_provider"/>
+                            <field name="background_style"/>
+                            <field name="dimensions"/>
+                            <field name="duration_sec"/>
+                            <field name="applied_to_product" widget="boolean_toggle"/>
+                            <field name="status" widget="badge"
+                                   decoration-success="status == 'done'"
+                                   decoration-warning="status == 'pending'"
+                                   decoration-danger="status == 'failed'"/>
+                            <button name="action_apply_to_product"
+                                    type="object"
+                                    string="Apply to Product"
+                                    class="btn-sm btn-success"
+                                    invisible="status != 'done' or applied_to_product"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

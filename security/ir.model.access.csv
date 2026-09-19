@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_product_photo_editor_internal,product.photo.editor.internal,model_product_photo_editor,base.group_user,1,0,0,0
+access_product_photo_editor_user,product.photo.editor.user,model_product_photo_editor,group_photo_editor_user,1,1,1,0
+access_product_photo_editor_manager,product.photo.editor.manager,model_product_photo_editor,group_photo_editor_manager,1,1,1,1
+access_product_photo_editor_wizard_internal,product.photo.editor.wizard.internal,model_product_photo_editor_wizard,base.group_user,1,1,1,1
+access_product_photo_editor_wizard_user,product.photo.editor.wizard.user,model_product_photo_editor_wizard,group_photo_editor_user,1,1,1,1
