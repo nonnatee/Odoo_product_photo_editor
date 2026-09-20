@@ -6,7 +6,10 @@ and direct application to product e-commerce catalog.
 """
 
 import base64
+import io
 import logging
+
+from PIL import Image
 
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
@@ -19,49 +22,56 @@ _logger = logging.getLogger(__name__)
 
 
 
-# Known image format magic bytes (first bytes of the file)
-_IMAGE_MAGIC = (
-    b'\x89PNG',          # PNG
-    b'\xff\xd8\xff',     # JPEG
-    b'RIFF',             # WEBP (RIFF....WEBP)
-    b'GIF8',             # GIF
-    b'BM',               # BMP
-    b'\x00\x00\x01\x00', # ICO
-)
-
-
 def _safe_b64decode(data):
-    """Safely decode base64 string or bytes, stripping data URI headers and whitespace.
+    """Convert a Binary field value to raw image bytes.
 
-    In Odoo 19, fields.Binary / fields.Image return raw bytes from the ORM.
-    This function detects whether the data is already raw image bytes (via magic
-    byte signatures) and skips base64 decoding in that case.
+    Handles three cases produced by Odoo 19 Binary / Image fields:
+      1. Raw bytes  — Odoo ORM returns decoded bytes directly.
+      2. Base64 bytes/str — legacy or RPC-path values.
+      3. Data-URI  — browser-side uploads ("data:image/png;base64,...").
+
+    Strategy: try PIL.Image.open() on the data as-is first.  PIL will
+    succeed immediately if the data is already raw binary.  Only if that
+    fails do we attempt a base64 decode and retry.
     """
     if not data:
         return b''
 
-    # Normalise to bytes first so we can inspect magic bytes
+    # ── Normalise to bytes ────────────────────────────────────────────────────
     if isinstance(data, str):
+        # Strip data-URI prefix ("data:image/png;base64,…")
         if ',' in data:
             data = data.split(',', 1)[1]
-        data = data.strip().encode('ascii')
+        try:
+            raw = data.strip().encode('ascii')
+        except UnicodeEncodeError:
+            raw = data.strip().encode('latin-1')
     elif isinstance(data, bytes):
-        if b',' in data[:64]:
+        if b',' in data[:64]:  # data-URI in bytes form
             data = data.split(b',', 1)[1]
-        data = data.strip()
+        raw = data.strip()
     else:
         return b''
 
-    # If the bytes are already raw image data, return them as-is
-    for magic in _IMAGE_MAGIC:
-        if data[:len(magic)] == magic:
-            return data
-
-    # Otherwise assume base64-encoded and decode
+    # ── Pass 1: try to open directly (handles raw-binary Odoo 19 ORM values) ─
     try:
-        return base64.b64decode(data)
+        _test = Image.open(io.BytesIO(raw))
+        _test.verify()  # lightweight format check without full decode
+        return raw
     except Exception:
-        return data
+        pass
+
+    # ── Pass 2: assume base64-encoded; decode then verify ────────────────────
+    try:
+        decoded = base64.b64decode(raw)
+        _test = Image.open(io.BytesIO(decoded))
+        _test.verify()
+        return decoded
+    except Exception:
+        pass
+
+    # ── Pass 3: return raw and let the pipeline surface a clean error ─────────
+    return raw
 
 
 class ProductPhotoEditorWizard(models.TransientModel):
