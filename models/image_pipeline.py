@@ -2,7 +2,8 @@
 """
 Product Photo Editor - Image Processing Pipeline Engine
 Supports:
-- Background Removal: Local edge-aware GrabCut + alpha matting, and external APIs (remove.bg, Clipdrop, Photoroom, Custom Webhook)
+- Background Removal: Local rembg neural-network (U2-Net) with GrabCut fallback,
+  and external APIs (remove.bg, Clipdrop, Photoroom, Custom Webhook)
 - Perspective Correction & Auto-Deskewing via OpenCV
 - Color & Lighting Correction: Gray World Auto White Balance + LAB CLAHE Exposure + Unsharp Mask Sharpening
 - Dimension Standardization: 2000x2000, 1000x1000, 1600x2000, 1920x1080 with padding
@@ -27,6 +28,13 @@ try:
     import requests
 except ImportError:
     requests = None
+
+try:
+    from rembg import remove as _rembg_remove
+    _REMBG_AVAILABLE = True
+except ImportError:
+    _rembg_remove = None
+    _REMBG_AVAILABLE = False
 
 _logger = logging.getLogger(__name__)
 
@@ -62,7 +70,7 @@ class ImagePipeline:
 
     # Service providers
     PROVIDERS = [
-        ('local', 'Local Engine (OpenCV + Alpha Matting)'),
+        ('local', 'Local Engine (rembg U2-Net Neural Network)'),
         ('remove_bg', 'Remove.bg API'),
         ('clipdrop', 'Clipdrop API (Stability AI)'),
         ('photoroom', 'Photoroom API'),
@@ -439,7 +447,7 @@ class ImagePipeline:
                     return cls._call_remove_bg_api(image_bytes_orig, api_key), 'remove.bg API'
                 except Exception as e:
                     _logger.warning("remove.bg API failed (%s), falling back to local engine", e)
-                    return cls._local_grabcut_segmentation(rgb_pil), 'local engine (fallback from remove.bg)'
+                    return cls._local_segmentation(rgb_pil), 'local engine (fallback from remove.bg)'
 
         elif provider == 'clipdrop':
             api_key = config.get('clipdrop_api_key')
@@ -448,7 +456,7 @@ class ImagePipeline:
                     return cls._call_clipdrop_api(image_bytes_orig, api_key), 'Clipdrop API'
                 except Exception as e:
                     _logger.warning("Clipdrop API failed (%s), falling back to local engine", e)
-                    return cls._local_grabcut_segmentation(rgb_pil), 'local engine (fallback from Clipdrop)'
+                    return cls._local_segmentation(rgb_pil), 'local engine (fallback from Clipdrop)'
 
         elif provider == 'photoroom':
             api_key = config.get('photoroom_api_key')
@@ -457,7 +465,7 @@ class ImagePipeline:
                     return cls._call_photoroom_api(image_bytes_orig, api_key), 'Photoroom API'
                 except Exception as e:
                     _logger.warning("Photoroom API failed (%s), falling back to local engine", e)
-                    return cls._local_grabcut_segmentation(rgb_pil), 'local engine (fallback from Photoroom)'
+                    return cls._local_segmentation(rgb_pil), 'local engine (fallback from Photoroom)'
 
         elif provider == 'custom_webhook':
             endpoint = config.get('custom_ai_endpoint_url')
@@ -467,15 +475,46 @@ class ImagePipeline:
                     return cls._call_custom_ai_endpoint(image_bytes_orig, endpoint, auth_token), 'Custom AI webhook'
                 except Exception as e:
                     _logger.warning("Custom AI webhook failed (%s), falling back to local engine", e)
-                    return cls._local_grabcut_segmentation(rgb_pil), 'local engine (fallback from Custom AI)'
+                    return cls._local_segmentation(rgb_pil), 'local engine (fallback from Custom AI)'
 
-        # Local segmentation engine (OpenCV GrabCut + adaptive edge matting)
-        return cls._local_grabcut_segmentation(rgb_pil), f"provider '{provider}' (local engine)"
+        # Local segmentation engine (rembg neural network with GrabCut fallback)
+        return cls._local_segmentation(rgb_pil), "rembg U2-Net" if _REMBG_AVAILABLE else "local GrabCut engine"
 
     @classmethod
-    def _local_grabcut_segmentation(cls, rgb_pil: Image.Image) -> Image.Image:
+    def _local_segmentation(cls, rgb_pil: Image.Image) -> Image.Image:
         """
-        High-quality offline segmentation using OpenCV GrabCut + morphological
+        Background removal dispatcher:
+        - Primary: rembg U2-Net neural network (best quality, requires `pip install rembg`)
+        - Fallback: OpenCV GrabCut + morphological refinement + edge alpha feathering
+        """
+        if _REMBG_AVAILABLE:
+            try:
+                return cls._rembg_segmentation(rgb_pil)
+            except Exception as e:
+                _logger.warning("rembg segmentation failed (%s), falling back to GrabCut", e)
+        return cls._grabcut_segmentation(rgb_pil)
+
+    @classmethod
+    def _rembg_segmentation(cls, rgb_pil: Image.Image) -> Image.Image:
+        """
+        Neural-network background removal via rembg (U2-Net model).
+        Produces a clean RGBA cutout with smooth alpha edges.
+        Requires: pip install rembg
+        """
+        rgba = _rembg_remove(rgb_pil)
+        if rgba.mode != 'RGBA':
+            rgba = rgba.convert('RGBA')
+        # Crop to the tight bounding box of the subject
+        alpha = rgba.split()[-1]
+        bbox = alpha.getbbox()
+        if bbox:
+            rgba = rgba.crop(bbox)
+        return rgba
+
+    @classmethod
+    def _grabcut_segmentation(cls, rgb_pil: Image.Image) -> Image.Image:
+        """
+        Fallback offline segmentation using OpenCV GrabCut + morphological
         refinement + edge alpha feathering. Produces clean RGBA cutout.
         """
         cv_rgb = np.array(rgb_pil)

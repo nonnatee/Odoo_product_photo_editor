@@ -42,7 +42,7 @@ Key Features:
         'views/photo_editor_menus.xml',
     ],
     'external_dependencies': {
-        'python': ['cv2', 'PIL', 'numpy', 'requests'],
+        'python': ['cv2', 'PIL', 'numpy', 'requests', 'rembg'],
     },
     'installable': True,
     'application': True,
