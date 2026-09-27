@@ -383,6 +383,37 @@ class TestPresetsAndQuickActions(unittest.TestCase):
         with self.assertRaises(Exception):
             ProductTemplate.action_quick_apply_preset(template, 'studio_minimal')
 
+    def test_09b_product_template_quick_action_invalid_or_corrupt_image(self):
+        """Triggering quick action on a product with unidentifiable image data raises UserError gracefully without 500 crash."""
+        from odoo.exceptions import UserError
+
+        mock_preset = MagicMock()
+        mock_preset.id = 101
+        mock_preset.name = "Studio Minimal"
+        mock_preset.code = "studio_minimal"
+        mock_preset.get_pipeline_params.return_value = {
+            'background_style': 'white',
+            'dimensions': 'square_1000',
+        }
+        mock_env = {
+            'product.photo.editor.preset': MagicMock(search=lambda *a, **k: mock_preset),
+            'ir.config_parameter': MagicMock(
+                sudo=lambda: MagicMock(
+                    get_param=lambda key, defval=None: 'local' if 'default_provider' in key else ''
+                )
+            ),
+        }
+        template = ProductTemplate()
+        template.id = 99
+        template.display_name = "Corrupted Image Product"
+        template.image_1920 = b"corrupted_non_image_payload"
+        template.env = mock_env
+        template.ensure_one = lambda: None
+
+        with self.assertRaises(UserError) as ctx:
+            template.action_quick_apply_preset('studio_minimal')
+        self.assertIn("Photo Editor Error", str(ctx.exception))
+
     def test_10_product_template_quick_action_happy_path(self):
         """Happy path for action_quick_apply_preset: generates in-memory preview and opens quick confirm wizard."""
         # Mock preset

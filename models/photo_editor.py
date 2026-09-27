@@ -8,6 +8,7 @@ configuration settings, and handles processing pipelines and product sync.
 import base64
 import io
 import logging
+import re
 from typing import Dict, Any
 
 from PIL import Image
@@ -18,59 +19,128 @@ from .image_pipeline import ImagePipeline, ImagePipelineError
 
 _logger = logging.getLogger(__name__)
 
+# Known binary magic headers for fast identification of raw raster images
+_IMAGE_MAGIC_PREFIXES = (
+    b'\xff\xd8\xff',           # JPEG
+    b'\x89PNG\r\n\x1a\n',     # PNG
+    b'GIF87a', b'GIF89a',     # GIF
+    b'RIFF',                   # WebP / AVI
+    b'BM',                     # BMP
+    b'II*\x00', b'MM\x00*',   # TIFF
+    b'\x00\x00\x01\x00',       # ICO
+)
+
+
+def _clean_and_b64decode(b64_bytes: bytes) -> bytes:
+    """Safely decode base64 bytes handling whitespace, line breaks, padding, and url-safe chars."""
+    if not b64_bytes:
+        return b''
+    # Strip whitespace, newlines, tabs, and surrounding quotes
+    cleaned = re.sub(rb'[\s\r\n\"\'\t]+', b'', b64_bytes)
+    # Translate URL-safe base64 characters
+    cleaned = cleaned.replace(b'-', b'+').replace(b'_', b'/')
+    # Pad to multiple of 4
+    missing_padding = len(cleaned) % 4
+    if missing_padding:
+        cleaned += b'=' * (4 - missing_padding)
+    try:
+        return base64.b64decode(cleaned)
+    except Exception:
+        return b64_bytes
 
 
 def _safe_b64decode(data):
-    """Convert a Binary field value to raw image bytes.
+    """Convert a Binary/Image field value to raw image bytes.
 
-    Handles three cases produced by Odoo 19 Binary / Image fields:
-      1. Raw bytes  — Odoo ORM returns decoded bytes directly.
-      2. Base64 bytes/str — legacy or RPC-path values.
-      3. Data-URI  — browser-side uploads ("data:image/png;base64,...").
+    Handles all representation formats across Odoo 19 Binary/Image fields:
+      1. Raw binary bytes, bytearray, memoryview (from ORM or filestore).
+      2. Data-URI strings/bytes ('data:image/...;base64,...').
+      3. Base64 strings or bytes (single, double, or nested).
+      4. Base64 with missing padding ('='), url-safe characters, or line breaks.
 
-    Strategy: try PIL.Image.open() on the data as-is first.  PIL will
-    succeed immediately if the data is already raw binary.  Only if that
-    fails do we attempt a base64 decode and retry.
+    Returns raw decoded bytes if successful, or raw bytes if unidentifiable
+    so that ImagePipeline can perform structured diagnosis and error messaging.
     """
     if not data:
         return b''
 
-    is_explicit_b64 = False
+    # 1. Convert memoryview / bytearray to bytes
+    if isinstance(data, (memoryview, bytearray)):
+        data = bytes(data)
 
-    # ── Normalise to bytes ────────────────────────────────────────────────────
+    is_explicit_data_uri = False
+
+    # 2. Extract payload if data-URI or string
     if isinstance(data, str):
-        # Strip data-URI prefix ("data:image/png;base64,…")
-        if ',' in data:
-            data = data.split(',', 1)[1]
-        is_explicit_b64 = True
+        data = data.strip().strip('"\'')
+        if data.startswith('data:'):
+            is_explicit_data_uri = True
+            if ';base64,' in data:
+                data = data.split(';base64,', 1)[1]
+            elif ',' in data:
+                data = data.split(',', 1)[1]
         try:
-            raw = data.strip().encode('ascii')
+            raw = data.encode('ascii')
         except UnicodeEncodeError:
-            raw = data.strip().encode('latin-1')
+            raw = data.encode('latin-1')
     elif isinstance(data, bytes):
-        if b',' in data[:64]:  # data-URI in bytes form
-            data = data.split(b',', 1)[1]
-            is_explicit_b64 = True
-        raw = data.strip()
+        raw = data.strip().strip(b'"\'')
+        if raw.startswith(b'data:'):
+            is_explicit_data_uri = True
+            if b';base64,' in raw:
+                raw = raw.split(b';base64,', 1)[1]
+            elif b',' in raw:
+                raw = raw.split(b',', 1)[1]
     else:
         return b''
 
-    # ── Pass 1: if already raw image bytes (and not explicitly b64 string/URI) ─
-    if not is_explicit_b64:
+    # 3. Check for raw image magic signatures or obvious text/HTML/SVG
+    if not is_explicit_data_uri:
+        if raw.startswith(_IMAGE_MAGIC_PREFIXES) or (len(raw) > 12 and raw[4:8] == b'ftyp'):
+            # Already valid raw image bytes without needing decode
+            return raw
+
+        # Obvious non-base64 clear text: HTML responses, web URLs, or raw SVG markup
+        stripped = raw.lstrip()
+        if stripped.startswith((b'<!DOCTYPE', b'<!doctype', b'<html', b'<HTML', b'<head', b'http://', b'https://', b'<?xml', b'<svg')):
+            return raw
+
+        # Try lightweight PIL verification if not recognized by common prefix
         try:
-            _test = Image.open(io.BytesIO(raw))
-            _test.verify()  # lightweight format check without full decode
+            test_img = Image.open(io.BytesIO(raw))
+            test_img.verify()
             return raw
         except Exception:
             pass
 
-    # ── Pass 2: assume base64-encoded; decode ────────────────────────────────
-    try:
-        return base64.b64decode(raw)
-    except Exception:
-        pass
+    # 4. Attempt base64 decode (Pass 1)
+    decoded = _clean_and_b64decode(raw)
+    if decoded and decoded != raw:
+        # Check if the decoded data is a valid raw image
+        if decoded.startswith(_IMAGE_MAGIC_PREFIXES) or (len(decoded) > 12 and decoded[4:8] == b'ftyp'):
+            return decoded
+        try:
+            test_img = Image.open(io.BytesIO(decoded))
+            test_img.verify()
+            return decoded
+        except Exception:
+            pass
 
-    # ── Pass 3: return raw and let the pipeline surface a clean error ─────────
+        # 5. Handle potential double-base64 encoding (Pass 2)
+        # Only accept double_decoded if it actually forms a verified image
+        double_decoded = _clean_and_b64decode(decoded)
+        if double_decoded and double_decoded != decoded:
+            if double_decoded.startswith(_IMAGE_MAGIC_PREFIXES) or (len(double_decoded) > 12 and double_decoded[4:8] == b'ftyp'):
+                return double_decoded
+            try:
+                test_img = Image.open(io.BytesIO(double_decoded))
+                test_img.verify()
+                return double_decoded
+            except Exception:
+                pass
+
+        return decoded
+
     return raw
 
 

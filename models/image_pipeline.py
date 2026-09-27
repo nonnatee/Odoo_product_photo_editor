@@ -99,6 +99,104 @@ class ImagePipeline:
         ('custom_webhook', 'Custom AI Endpoint / Webhook'),
     ]
 
+    @classmethod
+    def _ensure_image_bytes(cls, data) -> bytes:
+        """Convert input data to raw image bytes, handling base64, data URIs, and memoryviews."""
+        if not data:
+            return b''
+        try:
+            from .photo_editor import _safe_b64decode
+            return _safe_b64decode(data)
+        except Exception:
+            if isinstance(data, (memoryview, bytearray)):
+                return bytes(data)
+            return data
+
+    @classmethod
+    def _handle_unidentified_image(cls, image_bytes: bytes, original_error: Exception) -> Tuple[Image.Image, bytes]:
+        """Inspects unidentifiable image bytes, attempts format conversion (SVG/HEIC/AVIF),
+        or raises a descriptive ImagePipelineError explaining the exact issue to the user."""
+        if not image_bytes:
+            raise ImagePipelineError("No image data provided for processing.")
+
+        stripped = image_bytes.lstrip()
+
+        # Check for HTML / Error responses
+        if stripped.startswith((b'<!DOCTYPE', b'<!doctype', b'<html', b'<HTML', b'<head')):
+            raise ImagePipelineError(
+                "The product image field contains an HTML document (typically from a failed image download "
+                "or 404/500 web response) rather than a valid image. Please re-upload a valid photo."
+            )
+
+        # Check for URL strings
+        if stripped.startswith((b'http://', b'https://')):
+            url_str = stripped[:100].decode('utf-8', errors='ignore')
+            raise ImagePipelineError(
+                f"The product image field contains a URL ('{url_str}...') instead of binary image data. "
+                "Please upload the actual image file to the product."
+            )
+
+        # Check for SVG vector graphics
+        if stripped.startswith((b'<svg', b'<?xml')) or b'<svg' in stripped[:300]:
+            try:
+                import cairosvg
+                png_bytes = cairosvg.svg2png(bytestring=image_bytes)
+                img = Image.open(io.BytesIO(png_bytes))
+                return img, png_bytes
+            except ImportError:
+                raise ImagePipelineError(
+                    "The product photo is an SVG vector graphic. The AI photo editor requires a "
+                    "raster photo (JPEG, PNG, or WebP). Please upload a raster photo, or install "
+                    "'cairosvg' on the Odoo server to enable automatic SVG conversion."
+                )
+            except Exception as e:
+                raise ImagePipelineError(f"Failed to convert SVG image to PNG: {e}")
+
+        # Check for HEIC / HEIF (Apple iPhone photos)
+        is_heic = len(image_bytes) > 12 and (
+            image_bytes[4:8] == b'ftyp' and any(b in image_bytes[8:24] for b in (b'heic', b'heix', b'hevc', b'mif1', b'msf1'))
+        )
+        if is_heic:
+            try:
+                import pillow_heif
+                pillow_heif.register_heif_opener()
+                img = Image.open(io.BytesIO(image_bytes))
+                return img, image_bytes
+            except ImportError:
+                raise ImagePipelineError(
+                    "The product photo is in HEIC/HEIF format (Apple iPhone photo). "
+                    "Pillow cannot decode HEIC directly without 'pillow-heif'. "
+                    "Please install 'pillow-heif' on the Odoo server ('pip install pillow-heif') "
+                    "or convert the photo to JPEG or PNG before uploading."
+                )
+            except Exception as e:
+                raise ImagePipelineError(f"Failed to decode HEIC image: {e}")
+
+        # Check for AVIF images
+        is_avif = len(image_bytes) > 12 and (
+            image_bytes[4:8] == b'ftyp' and b'avif' in image_bytes[8:24]
+        )
+        if is_avif:
+            try:
+                import pillow_heif
+                pillow_heif.register_avif_opener()
+                img = Image.open(io.BytesIO(image_bytes))
+                return img, image_bytes
+            except ImportError:
+                raise ImagePipelineError(
+                    "The product photo is in AVIF format. To process AVIF images, "
+                    "please install 'pillow-heif' on the Odoo server ('pip install pillow-heif') "
+                    "or convert the photo to JPEG or PNG before uploading."
+                )
+            except Exception as e:
+                raise ImagePipelineError(f"Failed to decode AVIF image: {e}")
+
+        # Default fallback
+        raise ImagePipelineError(
+            f"Failed to decode input image: {original_error}. "
+            "Please ensure the product has a valid image in JPEG, PNG, or WebP format."
+        )
+
     # -------------------------------------------------------------------------
     # Public Entrypoint
     # -------------------------------------------------------------------------
@@ -144,14 +242,24 @@ class ImagePipeline:
         if not image_bytes:
             raise ImagePipelineError("No image data provided for processing.")
 
+        # Ensure raw bytes (auto-decode base64 or data-URI if passed directly)
+        image_bytes = cls._ensure_image_bytes(image_bytes)
+
         # 1. Decode input image
         try:
             pil_img = Image.open(io.BytesIO(image_bytes))
-            # Auto-orient based on EXIF
-            pil_img = ImageOps.exif_transpose(pil_img)
+            try:
+                pil_img = ImageOps.exif_transpose(pil_img)
+            except Exception:
+                pass
             orig_w, orig_h = pil_img.size
         except Exception as e:
-            raise ImagePipelineError(f"Failed to decode input image: {e}")
+            pil_img, image_bytes = cls._handle_unidentified_image(image_bytes, e)
+            try:
+                pil_img = ImageOps.exif_transpose(pil_img)
+            except Exception:
+                pass
+            orig_w, orig_h = pil_img.size
 
         steps_applied.append(f"Decoded input image ({orig_w}x{orig_h})")
 
@@ -350,6 +458,8 @@ class ImagePipeline:
             'format': fmt,
             'width': final_w,
             'height': final_h,
+            'orig_width': orig_w,
+            'orig_height': orig_h,
             'file_size': len(processed_bytes),
             'duration_sec': duration,
             'steps_applied': steps_applied,

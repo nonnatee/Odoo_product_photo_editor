@@ -22,58 +22,10 @@ _logger = logging.getLogger(__name__)
 
 
 
-def _safe_b64decode(data):
-    """Convert a Binary field value to raw image bytes.
-
-    Handles three cases produced by Odoo 19 Binary / Image fields:
-      1. Raw bytes  — Odoo ORM returns decoded bytes directly.
-      2. Base64 bytes/str — legacy or RPC-path values.
-      3. Data-URI  — browser-side uploads ("data:image/png;base64,...").
-
-    Strategy: try PIL.Image.open() on the data as-is first.  PIL will
-    succeed immediately if the data is already raw binary.  Only if that
-    fails do we attempt a base64 decode and retry.
-    """
-    if not data:
-        return b''
-
-    is_explicit_b64 = False
-
-    # ── Normalise to bytes ────────────────────────────────────────────────────
-    if isinstance(data, str):
-        # Strip data-URI prefix ("data:image/png;base64,…")
-        if ',' in data:
-            data = data.split(',', 1)[1]
-        is_explicit_b64 = True
-        try:
-            raw = data.strip().encode('ascii')
-        except UnicodeEncodeError:
-            raw = data.strip().encode('latin-1')
-    elif isinstance(data, bytes):
-        if b',' in data[:64]:  # data-URI in bytes form
-            data = data.split(b',', 1)[1]
-            is_explicit_b64 = True
-        raw = data.strip()
-    else:
-        return b''
-
-    # ── Pass 1: if already raw image bytes (and not explicitly b64 string/URI) ─
-    if not is_explicit_b64:
-        try:
-            _test = Image.open(io.BytesIO(raw))
-            _test.verify()  # lightweight format check without full decode
-            return raw
-        except Exception:
-            pass
-
-    # ── Pass 2: assume base64-encoded; decode ────────────────────────────────
-    try:
-        return base64.b64decode(raw)
-    except Exception:
-        pass
-
-    # ── Pass 3: return raw and let the pipeline surface a clean error ─────────
-    return raw
+try:
+    from ..models.photo_editor import _safe_b64decode
+except (ImportError, ValueError):
+    from models.photo_editor import _safe_b64decode
 
 
 class ProductPhotoEditorWizard(models.TransientModel):

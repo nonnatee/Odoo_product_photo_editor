@@ -6,10 +6,13 @@ Adds one-click photo editing, job count smart button, and batch optimization act
 
 import base64
 import io
+import logging
 from PIL import Image
 
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
+
+_logger = logging.getLogger(__name__)
 
 
 class ProductTemplate(models.Model):
@@ -160,9 +163,11 @@ class ProductTemplate(models.Model):
             raise UserError(_("Photo Editor preset '%s' not found. Please verify preset configuration.") % preset_code)
 
         from .photo_editor import _safe_b64decode
-        from .image_pipeline import ImagePipeline
+        from .image_pipeline import ImagePipeline, ImagePipelineError
 
         raw_bytes = _safe_b64decode(self.image_1920)
+        if not raw_bytes:
+            raise UserError(_("Could not decode image data for '%s'. Please re-upload a valid photo.") % self.display_name)
         orig_len = len(raw_bytes)
 
         ICP = self.env['ir.config_parameter'].sudo()
@@ -188,14 +193,26 @@ class ProductTemplate(models.Model):
             'gemini_model': gemini_model,
         })
 
-        res = ImagePipeline.process_image(**params)
+        try:
+            res = ImagePipeline.process_image(**params)
+        except ImagePipelineError as e:
+            _logger.warning("Quick AI optimization failed for '%s': %s", self.display_name, e)
+            raise UserError(_("Photo Editor Error: %s") % str(e))
+        except UserError:
+            raise
+        except Exception as e:
+            _logger.exception("Unexpected error during quick AI optimization for '%s': %s", self.display_name, e)
+            raise UserError(_("Failed to optimize photo: %s") % str(e))
 
         # Inspect dimensions
-        try:
-            orig_pil = Image.open(io.BytesIO(raw_bytes))
-            orig_w, orig_h = orig_pil.size
-        except Exception:
-            orig_w, orig_h = (0, 0)
+        orig_w = res.get('orig_width') or 0
+        orig_h = res.get('orig_height') or 0
+        if not orig_w or not orig_h:
+            try:
+                orig_pil = Image.open(io.BytesIO(raw_bytes))
+                orig_w, orig_h = orig_pil.size
+            except Exception:
+                orig_w, orig_h = (0, 0)
 
         def _format_size(size_bytes):
             if not size_bytes:
