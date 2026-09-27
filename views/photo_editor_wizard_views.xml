@@ -22,11 +22,12 @@
 
                             <group string="AI Pipeline Mode">
                                 <field name="ai_mode"/>
+                                <field name="gemini_model" invisible="ai_mode not in ('gemini_edit', 'expand')"/>
                                 <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" required="ai_mode == 'gemini_edit'" placeholder="e.g. Clean studio minimal e-commerce lighting with grounding shadow..."/>
                             </group>
 
                             <div class="alert alert-info py-2 px-3 small my-2" invisible="ai_mode != 'gemini_edit'">
-                                <i class="fa fa-magic me-1"/> <strong>Offloaded External AI Service:</strong> Scene creation, relighting, grounding shadows, and background composition are completely handled by Gemini AI Instruct. Local background removal, canvas dimension presets, and computer vision filters are bypassed.
+                                <i class="fa fa-magic me-1"/> <strong>Nano Banana 2 Offloaded AI Service:</strong> Scene creation, relighting, grounding shadows, and background composition are completely handled by Google Nano Banana 2 (Gemini 3.1 Flash Image). Local background removal, canvas dimension presets, and computer vision filters are bypassed.
                             </div>
 
                             <group string="Procedural Engine &amp; Background" invisible="ai_mode == 'gemini_edit'">

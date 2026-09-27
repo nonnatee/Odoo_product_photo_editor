@@ -206,15 +206,22 @@ class ProductPhotoEditor(models.Model):
         help="Preset profile applied to this photo editing job.",
     )
     prompt_instruction = fields.Text(
-        string='Gemini AI Prompt Instruction',
-        help="Natural language prompt instruction for Gemini AI instruction editing and relighting.",
+        string='Nano Banana 2 Prompt Instruction',
+        help="Natural language prompt instruction for Google Nano Banana 2 (Gemini 3.1 Flash Image) instruction editing and relighting.",
     )
     ai_mode = fields.Selection([
-        ('gemini_edit', 'Gemini AI Instruction Edit & Relight'),
+        ('gemini_edit', 'Nano Banana 2 (Gemini AI Instruct & Relight)'),
         ('cutout_only', 'Foreground Cutout Only (Local/rembg)'),
         ('expand', 'Generative Canvas Expand'),
         ('opencv_only', 'Procedural Computer Vision (Offline)'),
     ], string='AI Pipeline Mode', default='gemini_edit')
+
+    gemini_model = fields.Selection([
+        ('gemini-3.1-flash-image', 'Nano Banana 2 (Gemini 3.1 Flash Image - Recommended)'),
+        ('gemini-3.1-flash-lite-image', 'Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)'),
+        ('gemini-3-pro-image', 'Nano Banana Pro (Gemini 3 Pro Image)'),
+        ('gemini-3.8-flash', 'Gemini 3.8 Flash'),
+    ], string='Gemini Model', default='gemini-3.1-flash-image')
 
     @api.onchange('preset_id')
     def _onchange_preset_id(self):
@@ -235,6 +242,8 @@ class ProductPhotoEditor(models.Model):
             self.apply_sharpening = p.apply_sharpening
             self.prompt_instruction = p.prompt_instruction
             self.ai_mode = p.ai_mode
+            if hasattr(p, 'gemini_model') and p.gemini_model:
+                self.gemini_model = p.gemini_model
 
     # Workflow Status
     status = fields.Selection(
@@ -464,7 +473,7 @@ class ProductPhotoEditor(models.Model):
                 prompt_instruction=self.prompt_instruction,
                 ai_mode=self.ai_mode,
                 gemini_api_key=provider_config.get('gemini_api_key'),
-                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
+                gemini_model=self.gemini_model or provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
 
             processed_b64 = base64.b64encode(result['image_bytes'])

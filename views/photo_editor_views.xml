@@ -72,13 +72,14 @@
                     <notebook>
                         <page string="AI Pipeline &amp; Presets" name="pipeline_presets">
                             <div class="alert alert-info py-2 px-3 small mb-3" invisible="ai_mode != 'gemini_edit'">
-                                <i class="fa fa-magic me-1"/> <strong>Offloaded External AI Service:</strong> Scene creation, relighting, grounding shadows, and background composition are completely handled by Gemini AI Instruct. Local background removal, canvas dimension presets, and computer vision filters are bypassed.
+                                <i class="fa fa-magic me-1"/> <strong>Nano Banana 2 Offloaded AI Service:</strong> Scene creation, relighting, grounding shadows, and background composition are completely handled by Google Nano Banana 2 (Gemini 3.1 Flash Image). Local background removal, canvas dimension presets, and computer vision filters are bypassed.
                             </div>
                             <group>
                                 <group string="AI Engine &amp; Preset">
                                     <field name="preset_id" readonly="status != 'draft'"/>
                                     <field name="ai_mode" readonly="status != 'draft'"/>
-                                    <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" readonly="status != 'draft'" placeholder="Prompt for Gemini instruction edit..."/>
+                                    <field name="gemini_model" invisible="ai_mode not in ('gemini_edit', 'expand')" readonly="status != 'draft'"/>
+                                    <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" readonly="status != 'draft'" placeholder="Prompt for Nano Banana 2 instruction edit..."/>
                                     <field name="service_provider" invisible="ai_mode == 'gemini_edit'"/>
                                 </group>
                                 <group string="Background &amp; Dimensions" invisible="ai_mode == 'gemini_edit'">
@@ -261,6 +262,7 @@
                     <group>
                         <group string="AI Engine &amp; Quick Actions">
                             <field name="ai_mode"/>
+                            <field name="gemini_model" invisible="ai_mode not in ('gemini_edit', 'expand')"/>
                             <field name="show_in_quick_actions"/>
                             <field name="active"/>
                             <field name="sequence"/>
@@ -285,12 +287,12 @@
                     </group>
 
                     <notebook>
-                        <page string="Gemini AI Prompt &amp; Description" name="prompt_page">
+                        <page string="Nano Banana 2 AI Prompt &amp; Description" name="prompt_page">
                             <div class="alert alert-info py-2 px-3 small mb-2" invisible="ai_mode != 'gemini_edit'">
-                                <i class="fa fa-magic me-1"/> In Gemini Instruct mode, prompt instruction drives the entire scene generation, lighting, and composition offloaded to Gemini AI.
+                                <i class="fa fa-magic me-1"/> In Nano Banana 2 Instruct mode, prompt instruction drives the entire scene generation, lighting, and composition offloaded to Gemini AI.
                             </div>
                             <group>
-                                <field name="prompt_instruction" placeholder="Natural language prompt for Gemini 3.1 Flash Image instruction edit..." rows="4"/>
+                                <field name="prompt_instruction" placeholder="Natural language prompt for Google Nano Banana 2 instruction edit..." rows="4"/>
                                 <field name="description" placeholder="Internal notes or marketplace standard description..." rows="2"/>
                             </group>
                         </page>

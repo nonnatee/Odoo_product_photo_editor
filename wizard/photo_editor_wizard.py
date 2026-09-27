@@ -85,15 +85,22 @@ class ProductPhotoEditorWizard(models.TransientModel):
         help="Select a configured editing preset to prefill dimensions, prompt instructions, and styling.",
     )
     prompt_instruction = fields.Text(
-        string='Gemini AI Prompt Instruction',
-        help="Natural language prompt instruction for Gemini 3.1 Flash Image editing and lighting.",
+        string='Nano Banana 2 Prompt Instruction',
+        help="Natural language prompt instruction for Google Nano Banana 2 (Gemini 3.1 Flash Image) editing and lighting.",
     )
     ai_mode = fields.Selection([
-        ('gemini_edit', 'Gemini AI Instruction Edit & Relight'),
+        ('gemini_edit', 'Nano Banana 2 (Gemini AI Instruct & Relight)'),
         ('cutout_only', 'Foreground Cutout Only (Local/rembg)'),
         ('expand', 'Generative Canvas Expand'),
         ('opencv_only', 'Procedural Computer Vision (Offline)'),
     ], string='AI Pipeline Mode', default='gemini_edit')
+
+    gemini_model = fields.Selection([
+        ('gemini-3.1-flash-image', 'Nano Banana 2 (Gemini 3.1 Flash Image - Recommended)'),
+        ('gemini-3.1-flash-lite-image', 'Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)'),
+        ('gemini-3-pro-image', 'Nano Banana Pro (Gemini 3 Pro Image)'),
+        ('gemini-3.8-flash', 'Gemini 3.8 Flash'),
+    ], string='Gemini Model', default='gemini-3.1-flash-image')
 
     @api.onchange('preset_id')
     def _onchange_preset_id(self):
@@ -114,6 +121,8 @@ class ProductPhotoEditorWizard(models.TransientModel):
             self.apply_sharpening = p.apply_sharpening
             self.prompt_instruction = p.prompt_instruction
             self.ai_mode = p.ai_mode
+            if hasattr(p, 'gemini_model') and p.gemini_model:
+                self.gemini_model = p.gemini_model
 
     # Input Image
     image_original = fields.Binary(
@@ -236,7 +245,7 @@ class ProductPhotoEditorWizard(models.TransientModel):
                 prompt_instruction=self.prompt_instruction,
                 ai_mode=self.ai_mode,
                 gemini_api_key=provider_config.get('gemini_api_key'),
-                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
+                gemini_model=self.gemini_model or provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
 
             processed_b64 = base64.b64encode(result['image_bytes'])
@@ -302,7 +311,7 @@ class ProductPhotoEditorWizard(models.TransientModel):
                 prompt_instruction=self.prompt_instruction,
                 ai_mode=self.ai_mode,
                 gemini_api_key=provider_config.get('gemini_api_key'),
-                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
+                gemini_model=self.gemini_model or provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
             processed_b64 = base64.b64encode(res['image_bytes'])
             duration = res['duration_sec']
@@ -367,6 +376,8 @@ class ProductPhotoEditorWizard(models.TransientModel):
             job_vals['prompt_instruction'] = self.prompt_instruction
         if self.ai_mode:
             job_vals['ai_mode'] = self.ai_mode
+        if hasattr(self, 'gemini_model') and self.gemini_model:
+            job_vals['gemini_model'] = self.gemini_model
 
         if self.existing_job_id:
             self.existing_job_id.write(job_vals)
@@ -394,6 +405,7 @@ class ProductPhotoEditorWizard(models.TransientModel):
             'preset_id': self.preset_id.id if self.preset_id else False,
             'prompt_instruction': self.prompt_instruction,
             'ai_mode': self.ai_mode,
+            'gemini_model': self.gemini_model or 'gemini-3.1-flash-image',
             'image_original': self.image_original,
             'background_style': self.background_style,
             'custom_bg_color': self.custom_bg_color,

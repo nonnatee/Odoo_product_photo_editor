@@ -1416,6 +1416,7 @@ class ImagePipeline:
         Falls back to direct REST API if SDK fails, and to procedural OpenCV if no key is set.
         Returns tuple of (processed_bytes, provider_description).
         """
+        model_display = "Nano Banana 2 (gemini-3.1-flash-image)" if model == "gemini-3.1-flash-image" else model
         if api_key:
             if _GENAI_AVAILABLE and genai is not None:
                 try:
@@ -1445,7 +1446,7 @@ class ImagePipeline:
                         config=config,
                     )
                     gen_bytes = cls._extract_gemini_image(response)
-                    return gen_bytes, f"{model} (google-genai SDK)"
+                    return gen_bytes, f"{model_display} (google-genai SDK)"
                 except Exception as e:
                     _logger.info("google-genai SDK failed (%s), attempting REST fallback", e)
 
@@ -1457,7 +1458,7 @@ class ImagePipeline:
                     api_key=api_key,
                     model=model,
                 )
-                return gen_bytes, f"{model} (Direct REST API)"
+                return gen_bytes, f"{model_display} (Direct REST API)"
             except Exception as e:
                 _logger.info("Gemini REST API failed (%s), falling back to local procedural engine", e)
 
