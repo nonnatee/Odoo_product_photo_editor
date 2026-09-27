@@ -35,4 +35,10 @@
               parent="menu_product_photo_editor_config"
               action="action_product_photo_editor_settings"
               sequence="10"/>
+
+    <menuitem id="menu_product_photo_editor_presets"
+              name="Presets"
+              parent="menu_product_photo_editor_config"
+              action="action_product_photo_editor_preset"
+              sequence="20"/>
 </odoo>

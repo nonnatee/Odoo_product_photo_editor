@@ -12,11 +12,12 @@
                   decoration-info="status == 'processing'">
                 <field name="name"/>
                 <field name="product_id"/>
+                <field name="preset_id" optional="show"/>
                 <field name="service_provider"/>
                 <field name="background_style"/>
                 <field name="dimensions"/>
                 <field name="export_format"/>
-                <field name="duration_sec" widget="float_time" optional="show"/>
+                <field name="duration_sec" optional="show"/>
                 <field name="applied_to_product" widget="boolean_toggle"/>
                 <field name="status" widget="badge"
                        decoration-success="status == 'done'"
@@ -71,8 +72,13 @@
                     <notebook>
                         <page string="AI Pipeline &amp; Presets" name="pipeline_presets">
                             <group>
-                                <group string="Background &amp; Dimensions">
+                                <group string="AI Engine &amp; Preset">
+                                    <field name="preset_id" readonly="status != 'draft'"/>
+                                    <field name="ai_mode" readonly="status != 'draft'"/>
+                                    <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" readonly="status != 'draft'" placeholder="Prompt for Gemini instruction edit..."/>
                                     <field name="service_provider"/>
+                                </group>
+                                <group string="Background &amp; Dimensions">
                                     <field name="background_style"/>
                                     <field name="custom_bg_color" invisible="background_style != 'custom_color'"/>
                                     <field name="dimensions"/>
@@ -80,6 +86,8 @@
                                     <field name="target_height" invisible="dimensions != 'original'"/>
                                     <field name="padding_percent"/>
                                 </group>
+                            </group>
+                            <group>
                                 <group string="Color, Perspective &amp; Export">
                                     <field name="export_format"/>
                                     <field name="export_quality"/>
@@ -205,5 +213,99 @@
         <field name="view_mode">list,kanban,form</field>
         <field name="domain">[('status', '=', 'pending')]</field>
         <field name="context">{'search_default_filter_pending': 1}</field>
+    </record>
+
+    <!-- ===================================================================== -->
+    <!-- Product Photo Editor Presets Views & Actions                          -->
+    <!-- ===================================================================== -->
+
+    <!-- Preset List View (Odoo 19: <list>) -->
+    <record id="view_product_photo_editor_preset_list" model="ir.ui.view">
+        <field name="name">product.photo.editor.preset.list</field>
+        <field name="model">product.photo.editor.preset</field>
+        <field name="arch" type="xml">
+            <list string="Photo Editor Presets" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="ai_mode"/>
+                <field name="background_style"/>
+                <field name="dimensions"/>
+                <field name="show_in_quick_actions" widget="boolean_toggle"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Preset Form View -->
+    <record id="view_product_photo_editor_preset_form" model="ir.ui.view">
+        <field name="name">product.photo.editor.preset.form</field>
+        <field name="model">product.photo.editor.preset</field>
+        <field name="arch" type="xml">
+            <form string="Photo Editor Preset">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name" string="Preset Name"/>
+                        <h1><field name="name" placeholder="e.g. Studio Minimal"/></h1>
+                        <div class="d-flex align-items-center">
+                            <span class="text-muted me-2">Identifier:</span>
+                            <field name="code" placeholder="e.g. studio_minimal" style="max-width: 250px;"/>
+                        </div>
+                    </div>
+
+                    <group>
+                        <group string="AI Engine &amp; Quick Actions">
+                            <field name="ai_mode"/>
+                            <field name="show_in_quick_actions"/>
+                            <field name="active"/>
+                            <field name="sequence"/>
+                        </group>
+                        <group string="Canvas &amp; Output">
+                            <field name="background_style"/>
+                            <field name="custom_bg_color" invisible="background_style != 'custom_color'"/>
+                            <field name="dimensions"/>
+                            <field name="target_width" invisible="dimensions != 'original'"/>
+                            <field name="target_height" invisible="dimensions != 'original'"/>
+                            <field name="padding_percent"/>
+                            <field name="export_format"/>
+                            <field name="export_quality"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Gemini AI Prompt &amp; Description" name="prompt_page">
+                            <group>
+                                <field name="prompt_instruction" placeholder="Natural language prompt for Gemini 3.1 Flash Image instruction edit..." rows="4"/>
+                                <field name="description" placeholder="Internal notes or marketplace standard description..." rows="2"/>
+                            </group>
+                        </page>
+                        <page string="Computer Vision Filters" name="cv_filters">
+                            <group>
+                                <field name="apply_perspective"/>
+                                <field name="apply_color_correction"/>
+                                <field name="apply_auto_white_balance" invisible="not apply_color_correction"/>
+                                <field name="apply_contrast_enhancement" invisible="not apply_color_correction"/>
+                                <field name="apply_sharpening" invisible="not apply_color_correction"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Preset Action Window (Odoo 19: view_mode='list,form') -->
+    <record id="action_product_photo_editor_preset" model="ir.actions.act_window">
+        <field name="name">Editor Presets</field>
+        <field name="res_model">product.photo.editor.preset</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create your first AI Photo Editor Preset!
+            </p>
+            <p>
+                Configure prompt instructions, dimensions, and styling for quick 1-click execution.
+            </p>
+        </field>
     </record>
 </odoo>

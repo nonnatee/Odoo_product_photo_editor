@@ -4,3 +4,8 @@ access_product_photo_editor_user,product.photo.editor.user,model_product_photo_e
 access_product_photo_editor_manager,product.photo.editor.manager,model_product_photo_editor,group_photo_editor_manager,1,1,1,1
 access_product_photo_editor_wizard_internal,product.photo.editor.wizard.internal,model_product_photo_editor_wizard,base.group_user,1,1,1,1
 access_product_photo_editor_wizard_user,product.photo.editor.wizard.user,model_product_photo_editor_wizard,group_photo_editor_user,1,1,1,1
+access_product_photo_editor_preset_user,product.photo.editor.preset.user,model_product_photo_editor_preset,base.group_user,1,0,0,0
+access_product_photo_editor_preset_manager,product.photo.editor.preset.manager,model_product_photo_editor_preset,group_photo_editor_manager,1,1,1,1
+access_product_photo_editor_quick_confirm_internal,product.photo.editor.quick.confirm.internal,model_product_photo_editor_quick_confirm,base.group_user,1,1,1,1
+access_product_photo_editor_quick_confirm_user,product.photo.editor.quick.confirm.user,model_product_photo_editor_quick_confirm,group_photo_editor_user,1,1,1,1
+

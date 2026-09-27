@@ -30,6 +30,29 @@ class ResConfigSettings(models.TransientModel):
         string='Photoroom API Key',
         config_parameter='product_photo_editor.photoroom_api_key',
     )
+    photo_editor_gemini_api_key = fields.Char(
+        string='Google Gemini API Key',
+        config_parameter='product_photo_editor.gemini_api_key',
+        help="API Key for Google Gemini 3.1 Flash Image instruction-based editing, relighting, and generative fill.",
+    )
+    photo_editor_gemini_model = fields.Selection(
+        [
+            ('gemini-3.1-flash-image', 'Gemini 3.1 Flash Image (Nano Banana 2 - Recommended)'),
+            ('gemini-3-pro-image', 'Gemini 3 Pro Image (Nano Banana Pro)'),
+            ('gemini-3.8-flash', 'Gemini 3.8 Flash'),
+        ],
+        string='Gemini AI Model',
+        default='gemini-3.1-flash-image',
+        config_parameter='product_photo_editor.gemini_model',
+        help="Default model for AI instruction editing and generative outpainting.",
+    )
+    photo_editor_backup_original_to_gallery = fields.Boolean(
+        string='Archive Raw Photo to Extra Media Gallery',
+        default=True,
+        config_parameter='product_photo_editor.backup_original_to_gallery',
+        help="When enabled, accepting an AI optimization preserves the original raw photo by adding it to the product's extra media images.",
+    )
+
     photo_editor_custom_ai_endpoint_url = fields.Char(
         string='Custom AI Endpoint URL',
         config_parameter='product_photo_editor.custom_ai_endpoint_url',

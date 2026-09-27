@@ -1,5 +1,11 @@
+import os
 import sys
 import types
+
+_curr_dir = os.path.dirname(os.path.abspath(__file__))
+_pkg_root = os.path.dirname(_curr_dir)
+if _pkg_root not in sys.path:
+    sys.path.insert(0, _pkg_root)
 
 if 'odoo' not in sys.modules:
     try:
@@ -7,13 +13,41 @@ if 'odoo' not in sys.modules:
     except ImportError:
         class _Dummy:
             def __init__(self, *a, **k):
-                pass
+                self._records = []
             def __call__(self, *a, **k):
                 return self
             def __getattr__(self, name):
                 return _Dummy()
             def __getitem__(self, name):
+                if isinstance(name, int):
+                    if hasattr(self, '_records') and 0 <= name < len(self._records):
+                        return self._records[name]
+                    raise IndexError(name)
                 return _Dummy()
+            def __iter__(self):
+                if hasattr(self, '_records') and self._records:
+                    return iter(self._records)
+                return iter([])
+            def __len__(self):
+                if hasattr(self, '_records'):
+                    return len(self._records)
+                return 0
+            def __or__(self, other):
+                res = _Dummy()
+                res._records = list(getattr(self, '_records', []))
+                if hasattr(other, '_records') and other._records:
+                    res._records.extend(other._records)
+                elif other is not None and other is not self:
+                    res._records.append(other)
+                return res
+            def __ior__(self, other):
+                if not hasattr(self, '_records'):
+                    self._records = []
+                if hasattr(other, '_records') and other._records:
+                    self._records.extend(other._records)
+                elif other is not None and other is not self:
+                    self._records.append(other)
+                return self
 
         _odoo = types.ModuleType('odoo')
         _odoo.models = types.ModuleType('odoo.models')
@@ -27,6 +61,9 @@ if 'odoo' not in sys.modules:
             'Selection', 'Many2one', 'One2many', 'Many2many', 'Datetime', 'Date', 'Image'
         ]:
             setattr(_odoo.fields, fld, _Dummy)
+        import datetime
+        _odoo.fields.Datetime.now = lambda: datetime.datetime.now()
+        _odoo.fields.Date.today = lambda: datetime.date.today()
 
         _odoo.api = types.ModuleType('odoo.api')
         _odoo.api.depends = lambda *a, **k: lambda f: f
@@ -72,3 +109,5 @@ if 'odoo' not in sys.modules:
 from . import test_image_pipeline
 from . import test_photo_editor
 from . import test_controllers
+from . import test_presets_and_quick_actions
+

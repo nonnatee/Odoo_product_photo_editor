@@ -37,6 +37,7 @@ Key Features:
         'data/ir_cron_data.xml',
         'views/photo_editor_views.xml',
         'views/photo_editor_wizard_views.xml',
+        'views/photo_editor_quick_confirm_views.xml',
         'views/product_template_views.xml',
         'views/res_config_settings_views.xml',
         'views/photo_editor_menus.xml',

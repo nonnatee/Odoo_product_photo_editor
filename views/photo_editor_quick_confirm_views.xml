@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Quick Confirmation Modal Form View -->
+    <record id="view_product_photo_editor_quick_confirm_form" model="ir.ui.view">
+        <field name="name">product.photo.editor.quick.confirm.form</field>
+        <field name="model">product.photo.editor.quick.confirm</field>
+        <field name="arch" type="xml">
+            <form string="AI Photo Optimization - Quick Review">
+                <sheet>
+                    <div class="alert alert-info d-flex align-items-center justify-content-between p-2 mb-3" role="alert">
+                        <div>
+                            <i class="fa fa-magic me-2 fs-5 text-primary"/>
+                            <strong>Preset Applied: </strong>
+                            <field name="preset_name" class="fw-bold text-dark"/>
+                        </div>
+                        <div class="text-muted small">
+                            <span>Processing time: </span>
+                            <field name="duration_sec"/>s
+                        </div>
+                    </div>
+
+                    <field name="product_id" invisible="1"/>
+                    <field name="preset_id" invisible="1"/>
+
+                    <!-- Side-by-Side Comparison -->
+                    <div class="row g-3">
+                        <!-- Before / Raw Image Card -->
+                        <div class="col-6">
+                            <div class="card h-100 border-secondary-subtle shadow-sm text-center">
+                                <div class="card-header bg-light py-2 fw-semibold text-secondary">
+                                    <i class="fa fa-camera me-1"/> Before (Original Raw Photo)
+                                </div>
+                                <div class="card-body p-2 d-flex flex-column align-items-center justify-content-center bg-white" style="min-height: 320px;">
+                                    <field name="image_original" widget="image" class="img-fluid rounded" style="max-height: 280px; max-width: 100%; object-fit: contain;" readonly="1"/>
+                                </div>
+                                <div class="card-footer bg-light py-1 text-muted small d-flex justify-content-around">
+                                    <span><field name="original_width"/> × <field name="original_height"/> px</span>
+                                    <span><field name="original_file_size"/></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- After / AI Optimized Card -->
+                        <div class="col-6">
+                            <div class="card h-100 border-success shadow-sm text-center">
+                                <div class="card-header bg-success-subtle text-success-emphasis py-2 fw-semibold">
+                                    <i class="fa fa-check-circle me-1 text-success"/> After (AI Optimized Marketplace)
+                                </div>
+                                <div class="card-body p-2 d-flex flex-column align-items-center justify-content-center bg-white" style="min-height: 320px;">
+                                    <field name="image_preview" widget="image" class="img-fluid rounded" style="max-height: 280px; max-width: 100%; object-fit: contain;" readonly="1"/>
+                                </div>
+                                <div class="card-footer bg-success-subtle text-success py-1 fw-medium small d-flex justify-content-around">
+                                    <span><field name="preview_width"/> × <field name="preview_height"/> px</span>
+                                    <span><field name="preview_file_size"/></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 p-2 bg-light rounded border text-muted small">
+                        <i class="fa fa-info-circle me-1"/>
+                        <field name="steps_applied" readonly="1"/>
+                    </div>
+                </sheet>
+                <footer>
+                    <button name="action_apply_and_close" string="✓ Accept &amp; Apply" type="object" class="btn btn-success"/>
+                    <button name="action_open_full_wizard" string="⚙ Adjust in Full Wizard" type="object" class="btn btn-secondary"/>
+                    <button string="Cancel" class="btn btn-link" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Window Action -->
+    <record id="action_product_photo_editor_quick_confirm" model="ir.actions.act_window">
+        <field name="name">Quick AI Confirmation</field>
+        <field name="res_model">product.photo.editor.quick.confirm</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+</odoo>

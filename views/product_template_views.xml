@@ -11,11 +11,29 @@
                  We inject one before <sheet> instead. -->
             <xpath expr="//sheet" position="before">
                 <header>
-                    <button name="action_open_photo_editor_wizard"
-                            string="✨ AI Photo Editor"
+                    <button name="action_quick_studio_minimal"
+                            string="⚡ Studio Minimal"
                             type="object"
                             class="btn-primary"
-                            help="Launch AI photo optimization wizard to remove background, correct perspective, and standardize catalog images."/>
+                            invisible="not image_1920"
+                            help="One-click studio minimal optimization: pure white background with realistic grounding contact shadow and clean commercial lighting."/>
+                    <button name="action_quick_album_scale"
+                            string="⚡ Album w/ Scale"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="not image_1920"
+                            help="One-click lookbook preset: neutral grey background with 4:5 fashion framing and contextual scale perspective."/>
+                    <button name="action_quick_printed_catalog"
+                            string="⚡ Printed Catalog"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="not image_1920"
+                            help="One-click print catalog preset: ultra-sharp edge definition, neutral balance, and unsharp masking."/>
+                    <button name="action_open_photo_editor_wizard"
+                            string="✨ Custom AI Wizard"
+                            type="object"
+                            class="btn-secondary"
+                            help="Launch full interactive AI photo wizard to customize all background styles, dimensions, and prompt instructions."/>
                 </header>
             </xpath>
 

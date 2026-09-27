@@ -35,11 +35,14 @@ def _safe_b64decode(data):
     if not data:
         return b''
 
+    is_explicit_b64 = False
+
     # ── Normalise to bytes ────────────────────────────────────────────────────
     if isinstance(data, str):
         # Strip data-URI prefix ("data:image/png;base64,…")
         if ',' in data:
             data = data.split(',', 1)[1]
+        is_explicit_b64 = True
         try:
             raw = data.strip().encode('ascii')
         except UnicodeEncodeError:
@@ -47,24 +50,23 @@ def _safe_b64decode(data):
     elif isinstance(data, bytes):
         if b',' in data[:64]:  # data-URI in bytes form
             data = data.split(b',', 1)[1]
+            is_explicit_b64 = True
         raw = data.strip()
     else:
         return b''
 
-    # ── Pass 1: try to open directly (handles raw-binary Odoo 19 ORM values) ─
-    try:
-        _test = Image.open(io.BytesIO(raw))
-        _test.verify()  # lightweight format check without full decode
-        return raw
-    except Exception:
-        pass
+    # ── Pass 1: if already raw image bytes (and not explicitly b64 string/URI) ─
+    if not is_explicit_b64:
+        try:
+            _test = Image.open(io.BytesIO(raw))
+            _test.verify()  # lightweight format check without full decode
+            return raw
+        except Exception:
+            pass
 
-    # ── Pass 2: assume base64-encoded; decode then verify ────────────────────
+    # ── Pass 2: assume base64-encoded; decode ────────────────────────────────
     try:
-        decoded = base64.b64decode(raw)
-        _test = Image.open(io.BytesIO(decoded))
-        _test.verify()
-        return decoded
+        return base64.b64decode(raw)
     except Exception:
         pass
 
@@ -106,6 +108,23 @@ class ProductPhotoEditor(models.Model):
         default=lambda self: self.env.company,
     )
     active = fields.Boolean(default=True)
+
+    preset_id = fields.Many2one(
+        'product.photo.editor.preset',
+        string='Preset Applied',
+        ondelete='set null',
+        help="Preset profile applied to this photo editing job.",
+    )
+    prompt_instruction = fields.Text(
+        string='Gemini AI Prompt Instruction',
+        help="Natural language prompt instruction for Gemini AI instruction editing and relighting.",
+    )
+    ai_mode = fields.Selection([
+        ('gemini_edit', 'Gemini AI Instruction Edit & Relight'),
+        ('cutout_only', 'Foreground Cutout Only (Local/rembg)'),
+        ('expand', 'Generative Canvas Expand'),
+        ('opencv_only', 'Procedural Computer Vision (Offline)'),
+    ], string='AI Pipeline Mode', default='gemini_edit')
 
     # Workflow Status
     status = fields.Selection(
@@ -332,6 +351,10 @@ class ProductPhotoEditor(models.Model):
                 padding_percent=self.padding_percent,
                 service_provider=self.service_provider,
                 provider_config=provider_config,
+                prompt_instruction=self.prompt_instruction,
+                ai_mode=self.ai_mode,
+                gemini_api_key=provider_config.get('gemini_api_key'),
+                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
 
             processed_b64 = base64.b64encode(result['image_bytes'])
@@ -441,6 +464,9 @@ class ProductPhotoEditor(models.Model):
                 'default_apply_sharpening': self.apply_sharpening,
                 'default_padding_percent': self.padding_percent,
                 'default_service_provider': self.service_provider,
+                'default_preset_id': self.preset_id.id if self.preset_id else False,
+                'default_prompt_instruction': self.prompt_instruction,
+                'default_ai_mode': self.ai_mode,
                 'default_existing_job_id': self.id,
             }
         }
@@ -486,6 +512,8 @@ class ProductPhotoEditor(models.Model):
             'photoroom_api_key': ICP.get_param('product_photo_editor.photoroom_api_key', ''),
             'custom_ai_endpoint_url': ICP.get_param('product_photo_editor.custom_ai_endpoint_url', ''),
             'custom_ai_api_key': ICP.get_param('product_photo_editor.custom_ai_api_key', ''),
+            'gemini_api_key': ICP.get_param('product_photo_editor.gemini_api_key', ''),
+            'gemini_model': ICP.get_param('product_photo_editor.gemini_model', 'gemini-3.1-flash-image'),
         }
 
     @staticmethod

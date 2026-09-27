@@ -37,11 +37,14 @@ def _safe_b64decode(data):
     if not data:
         return b''
 
+    is_explicit_b64 = False
+
     # ── Normalise to bytes ────────────────────────────────────────────────────
     if isinstance(data, str):
         # Strip data-URI prefix ("data:image/png;base64,…")
         if ',' in data:
             data = data.split(',', 1)[1]
+        is_explicit_b64 = True
         try:
             raw = data.strip().encode('ascii')
         except UnicodeEncodeError:
@@ -49,24 +52,23 @@ def _safe_b64decode(data):
     elif isinstance(data, bytes):
         if b',' in data[:64]:  # data-URI in bytes form
             data = data.split(b',', 1)[1]
+            is_explicit_b64 = True
         raw = data.strip()
     else:
         return b''
 
-    # ── Pass 1: try to open directly (handles raw-binary Odoo 19 ORM values) ─
-    try:
-        _test = Image.open(io.BytesIO(raw))
-        _test.verify()  # lightweight format check without full decode
-        return raw
-    except Exception:
-        pass
+    # ── Pass 1: if already raw image bytes (and not explicitly b64 string/URI) ─
+    if not is_explicit_b64:
+        try:
+            _test = Image.open(io.BytesIO(raw))
+            _test.verify()  # lightweight format check without full decode
+            return raw
+        except Exception:
+            pass
 
-    # ── Pass 2: assume base64-encoded; decode then verify ────────────────────
+    # ── Pass 2: assume base64-encoded; decode ────────────────────────────────
     try:
-        decoded = base64.b64decode(raw)
-        _test = Image.open(io.BytesIO(decoded))
-        _test.verify()
-        return decoded
+        return base64.b64decode(raw)
     except Exception:
         pass
 
@@ -125,6 +127,41 @@ class ProductPhotoEditorWizard(models.TransientModel):
         'product.photo.editor',
         string='Existing Job',
     )
+    preset_id = fields.Many2one(
+        'product.photo.editor.preset',
+        string='Apply Preset',
+        help="Select a configured editing preset to prefill dimensions, prompt instructions, and styling.",
+    )
+    prompt_instruction = fields.Text(
+        string='Gemini AI Prompt Instruction',
+        help="Natural language prompt instruction for Gemini 3.1 Flash Image editing and lighting.",
+    )
+    ai_mode = fields.Selection([
+        ('gemini_edit', 'Gemini AI Instruction Edit & Relight'),
+        ('cutout_only', 'Foreground Cutout Only (Local/rembg)'),
+        ('expand', 'Generative Canvas Expand'),
+        ('opencv_only', 'Procedural Computer Vision (Offline)'),
+    ], string='AI Pipeline Mode', default='gemini_edit')
+
+    @api.onchange('preset_id')
+    def _onchange_preset_id(self):
+        if self.preset_id:
+            p = self.preset_id
+            self.background_style = p.background_style
+            self.custom_bg_color = p.custom_bg_color or '#FFFFFF'
+            self.dimensions = p.dimensions
+            self.target_width = p.target_width
+            self.target_height = p.target_height
+            self.export_format = p.export_format
+            self.export_quality = p.export_quality
+            self.padding_percent = p.padding_percent
+            self.apply_perspective = p.apply_perspective
+            self.apply_color_correction = p.apply_color_correction
+            self.apply_auto_white_balance = p.apply_auto_white_balance
+            self.apply_contrast_enhancement = p.apply_contrast_enhancement
+            self.apply_sharpening = p.apply_sharpening
+            self.prompt_instruction = p.prompt_instruction
+            self.ai_mode = p.ai_mode
 
     # Input Image
     image_original = fields.Binary(
@@ -244,6 +281,10 @@ class ProductPhotoEditorWizard(models.TransientModel):
                 padding_percent=self.padding_percent,
                 service_provider=self.service_provider,
                 provider_config=provider_config,
+                prompt_instruction=self.prompt_instruction,
+                ai_mode=self.ai_mode,
+                gemini_api_key=provider_config.get('gemini_api_key'),
+                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
 
             processed_b64 = base64.b64encode(result['image_bytes'])
@@ -306,6 +347,10 @@ class ProductPhotoEditorWizard(models.TransientModel):
                 padding_percent=self.padding_percent,
                 service_provider=self.service_provider,
                 provider_config=provider_config,
+                prompt_instruction=self.prompt_instruction,
+                ai_mode=self.ai_mode,
+                gemini_api_key=provider_config.get('gemini_api_key'),
+                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
             processed_b64 = base64.b64encode(res['image_bytes'])
             duration = res['duration_sec']
@@ -313,6 +358,20 @@ class ProductPhotoEditorWizard(models.TransientModel):
             width = res['width']
             height = res['height']
             file_size = res['file_size']
+
+        # Non-destructive backup to product.image
+        ICP = self.env['ir.config_parameter'].sudo()
+        backup_gallery = ICP.get_param('product_photo_editor.backup_original_to_gallery', 'True') in ('True', 'true', '1')
+        if backup_gallery and self.image_original and 'product.image' in self.env:
+            try:
+                self.env['product.image'].create({
+                    'name': _("Original Photo - %s") % (self.product_id.name or ""),
+                    'product_tmpl_id': self.product_id.id,
+                    'image_1920': self.image_original,
+                })
+            except Exception as e:
+                _logger.warning("Could not archive original image to gallery: %s", e)
+
 
         # Update product template primary image
         self.product_id.write({'image_1920': processed_b64})
@@ -350,6 +409,13 @@ class ProductPhotoEditorWizard(models.TransientModel):
                 'transformation_log': "\n".join(f"- {s}" for s in steps),
             })
 
+        if self.preset_id:
+            job_vals['preset_id'] = self.preset_id.id
+        if self.prompt_instruction:
+            job_vals['prompt_instruction'] = self.prompt_instruction
+        if self.ai_mode:
+            job_vals['ai_mode'] = self.ai_mode
+
         if self.existing_job_id:
             self.existing_job_id.write(job_vals)
         else:
@@ -373,6 +439,9 @@ class ProductPhotoEditorWizard(models.TransientModel):
         job = self.env['product.photo.editor'].create({
             'product_id': self.product_id.id,
             'product_variant_id': self.product_variant_id.id if self.product_variant_id else False,
+            'preset_id': self.preset_id.id if self.preset_id else False,
+            'prompt_instruction': self.prompt_instruction,
+            'ai_mode': self.ai_mode,
             'image_original': self.image_original,
             'background_style': self.background_style,
             'custom_bg_color': self.custom_bg_color,
@@ -411,4 +480,7 @@ class ProductPhotoEditorWizard(models.TransientModel):
             'photoroom_api_key': ICP.get_param('product_photo_editor.photoroom_api_key', ''),
             'custom_ai_endpoint_url': ICP.get_param('product_photo_editor.custom_ai_endpoint_url', ''),
             'custom_ai_api_key': ICP.get_param('product_photo_editor.custom_ai_api_key', ''),
+            'gemini_api_key': ICP.get_param('product_photo_editor.gemini_api_key', ''),
+            'gemini_model': ICP.get_param('product_photo_editor.gemini_model', 'gemini-3.1-flash-image'),
         }
+

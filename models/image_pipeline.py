@@ -25,16 +25,38 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageOps
 
 try:
+    from google import genai
+    from google.genai import types as genai_types
+    _GENAI_AVAILABLE = True
+except Exception:
+    genai = None
+    genai_types = None
+    _GENAI_AVAILABLE = False
+
+try:
     import requests
 except ImportError:
     requests = None
 
 try:
-    from rembg import remove as _rembg_remove
+    from rembg import remove as _rembg_remove, new_session as _rembg_new_session
     _REMBG_AVAILABLE = True
 except ImportError:
     _rembg_remove = None
+    _rembg_new_session = None
     _REMBG_AVAILABLE = False
+
+_rembg_session_cache = None
+
+def _get_cached_rembg_session():
+    """Caches rembg ONNX session to avoid costly re-initialization on every invocation."""
+    global _rembg_session_cache
+    if _rembg_session_cache is None and _rembg_new_session is not None:
+        try:
+            _rembg_session_cache = _rembg_new_session("u2net")
+        except Exception as e:
+            _logger.warning("Could not initialize rembg session: %s", e)
+    return _rembg_session_cache
 
 _logger = logging.getLogger(__name__)
 
@@ -99,6 +121,10 @@ class ImagePipeline:
         padding_percent: float = 8.0,
         service_provider: str = 'local',
         provider_config: Optional[Dict[str, Any]] = None,
+        prompt_instruction: Optional[str] = None,
+        ai_mode: str = 'gemini_edit',
+        gemini_api_key: Optional[str] = None,
+        gemini_model: str = 'gemini-3.1-flash-image',
     ) -> Dict[str, Any]:
         """
         Execute full image editing pipeline.
@@ -128,6 +154,58 @@ class ImagePipeline:
             raise ImagePipelineError(f"Failed to decode input image: {e}")
 
         steps_applied.append(f"Decoded input image ({orig_w}x{orig_h})")
+
+        # 1b. AI Instruction Edit or Generative Canvas Expand if requested
+        if prompt_instruction and ai_mode == 'gemini_edit':
+            try:
+                edited_bytes, edit_provider = cls.gemini_instruction_edit(
+                    image_bytes=image_bytes,
+                    prompt=prompt_instruction,
+                    api_key=gemini_api_key,
+                    model=gemini_model,
+                )
+                image_bytes = edited_bytes
+                pil_img = Image.open(io.BytesIO(image_bytes))
+                pil_img = ImageOps.exif_transpose(pil_img)
+                orig_w, orig_h = pil_img.size
+                steps_applied.append(f"Applied AI instruction edit via {edit_provider}")
+            except Exception as e:
+                _logger.warning("Instruction edit encountered issue, continuing: %s", e)
+
+        elif prompt_instruction and ai_mode == 'opencv_only':
+            try:
+                edited_bytes = cls.procedural_instruction_edit(
+                    image_bytes=image_bytes,
+                    prompt=prompt_instruction,
+                )
+                image_bytes = edited_bytes
+                pil_img = Image.open(io.BytesIO(image_bytes))
+                pil_img = ImageOps.exif_transpose(pil_img)
+                orig_w, orig_h = pil_img.size
+                steps_applied.append("Applied procedural CV instruction filter")
+            except Exception as e:
+                _logger.warning("Procedural filter encountered issue, continuing: %s", e)
+
+        elif ai_mode == 'expand':
+            try:
+                pad_ratio = max(0.05, min(0.3, padding_percent / 100.0))
+                pad_w = int(orig_w * pad_ratio)
+                pad_h = int(orig_h * pad_ratio)
+                expanded_bytes = cls.gemini_expand(
+                    image_bytes=image_bytes,
+                    top=pad_h, bottom=pad_h, left=pad_w, right=pad_w,
+                    prompt=prompt_instruction or "",
+                    api_key=gemini_api_key,
+                    model=gemini_model,
+                )
+                image_bytes = expanded_bytes
+                pil_img = Image.open(io.BytesIO(image_bytes))
+                pil_img = ImageOps.exif_transpose(pil_img)
+                orig_w, orig_h = pil_img.size
+                steps_applied.append("Applied generative canvas expand")
+            except Exception as e:
+                _logger.warning("Generative expand encountered issue, continuing: %s", e)
+
 
         # Check if input already has an existing alpha mask/cutout
         has_existing_alpha = False
@@ -501,7 +579,11 @@ class ImagePipeline:
         Produces a clean RGBA cutout with smooth alpha edges.
         Requires: pip install rembg
         """
-        rgba = _rembg_remove(rgb_pil)
+        session = _get_cached_rembg_session()
+        if session is not None:
+            rgba = _rembg_remove(rgb_pil, session=session)
+        else:
+            rgba = _rembg_remove(rgb_pil)
         if rgba.mode != 'RGBA':
             rgba = rgba.convert('RGBA')
         # Crop to the tight bounding box of the subject
@@ -881,6 +963,479 @@ class ImagePipeline:
             gradient_arr[y, :, 3] = 255
 
         return Image.fromarray(gradient_arr, mode='RGBA')
+
+    # -------------------------------------------------------------------------
+    # Gemini AI & Procedural Computer Vision Capabilities
+    # -------------------------------------------------------------------------
+    @classmethod
+    def extract_mask_pil(cls, mask_bytes: bytes) -> Image.Image:
+        """Parses a mask from bytes, handling L, RGB, and RGBA safely with alpha masking."""
+        pil_mask = Image.open(io.BytesIO(mask_bytes))
+        if pil_mask.mode in ("RGBA", "LA") or (pil_mask.mode == "P" and "transparency" in pil_mask.info):
+            rgba = pil_mask.convert("RGBA")
+            np_rgba = np.array(rgba)
+            r = np_rgba[:, :, 0].astype(np.float32)
+            g = np_rgba[:, :, 1].astype(np.float32)
+            b = np_rgba[:, :, 2].astype(np.float32)
+            a = np_rgba[:, :, 3].astype(np.float32)
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            effective = (lum * (a / 255.0)).astype(np.uint8)
+            return Image.fromarray(effective, mode="L")
+        return pil_mask.convert("L")
+
+    @classmethod
+    def local_inpaint(cls, image_bytes: bytes, mask_bytes: bytes, method: str = "telea") -> bytes:
+        """Inpaints masked region using OpenCV's Telea or Navier-Stokes algorithm."""
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        has_alpha = pil_img.mode == "RGBA"
+        img_rgb = pil_img.convert("RGB")
+        cv_img = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2BGR)
+
+        mask_pil = cls.extract_mask_pil(mask_bytes)
+        if mask_pil.size != pil_img.size:
+            mask_pil = mask_pil.resize(pil_img.size, Image.Resampling.NEAREST)
+
+        mask_np = np.array(mask_pil)
+        _, mask_bin = cv2.threshold(mask_np, 128, 255, cv2.THRESH_BINARY)
+        inpaint_flag = cv2.INPAINT_TELEA if method.lower() == "telea" else cv2.INPAINT_NS
+        inpainted_bgr = cv2.inpaint(cv_img, mask_bin, inpaintRadius=5, flags=inpaint_flag)
+        inpainted_rgb = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2RGB)
+
+        result_pil = Image.fromarray(inpainted_rgb)
+        if has_alpha:
+            orig_alpha = np.array(pil_img.split()[-1])
+            new_alpha = np.maximum(orig_alpha, mask_bin)
+            result_pil.putalpha(Image.fromarray(new_alpha))
+
+        out_io = io.BytesIO()
+        result_pil.save(out_io, format="PNG")
+        return out_io.getvalue()
+
+    @classmethod
+    def _extract_gemini_image(cls, response: Any) -> bytes:
+        """Extracts generated image bytes from Gemini SDK response or REST response dict."""
+        # 1. Dictionary from direct REST HTTP call
+        if isinstance(response, dict):
+            candidates = response.get("candidates") or []
+            for candidate in candidates:
+                content = candidate.get("content") or {}
+                parts = content.get("parts") or []
+                for part in parts:
+                    inline = part.get("inline_data") or part.get("inlineData")
+                    if inline and "data" in inline:
+                        b64_data = inline["data"]
+                        return base64.b64decode(b64_data)
+            # Check prompt feedback or block reasons
+            block_reason = response.get("promptFeedback", {}).get("blockReason")
+            if block_reason:
+                raise ValueError(f"Gemini generation blocked: {block_reason}")
+            raise ValueError("No image data found in Gemini REST response.")
+
+        # 2. SDK response object output_image attribute
+        if hasattr(response, "output_image") and response.output_image:
+            out_img = response.output_image
+            data = getattr(out_img, "data", None)
+            if data:
+                if isinstance(data, str):
+                    return base64.b64decode(data)
+                return data
+
+        # 3. SDK response parts
+        if hasattr(response, "parts") and response.parts:
+            for part in response.parts:
+                if hasattr(part, "as_image") and callable(part.as_image):
+                    try:
+                        img = part.as_image()
+                        if img:
+                            out = io.BytesIO()
+                            img.save(out, format="PNG")
+                            return out.getvalue()
+                    except Exception:
+                        pass
+                if hasattr(part, "inline_data") and part.inline_data:
+                    data = part.inline_data.data
+                    if isinstance(data, str):
+                        return base64.b64decode(data)
+                    return data
+
+        if hasattr(response, "candidates") and response.candidates:
+            for candidate in response.candidates:
+                if hasattr(candidate, "content") and hasattr(candidate.content, "parts"):
+                    for part in candidate.content.parts:
+                        if hasattr(part, "as_image") and callable(part.as_image):
+                            try:
+                                img = part.as_image()
+                                if img:
+                                    out = io.BytesIO()
+                                    img.save(out, format="PNG")
+                                    return out.getvalue()
+                            except Exception:
+                                pass
+                        if hasattr(part, "inline_data") and part.inline_data:
+                            data = part.inline_data.data
+                            if isinstance(data, str):
+                                return base64.b64decode(data)
+                            return data
+
+        raise ValueError("No image data found in Gemini response.")
+
+    @classmethod
+    def _call_gemini_rest(
+        cls,
+        prompt: str,
+        image_bytes: bytes,
+        mask_bytes: Optional[bytes] = None,
+        api_key: str = "",
+        model: str = "gemini-3.1-flash-image",
+    ) -> bytes:
+        """Direct REST fallback to Google Gemini generateContent endpoint."""
+        if not requests:
+            raise ImagePipelineError("requests library is required for Gemini REST API calls.")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        parts = [
+            {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(image_bytes).decode("ascii")}}
+        ]
+        if mask_bytes:
+            parts.append(
+                {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(mask_bytes).decode("ascii")}}
+            )
+        parts.append({"text": prompt})
+
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+            }
+        }
+        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        if resp.status_code != 200:
+            raise ImagePipelineError(f"Gemini REST API error [{resp.status_code}]: {resp.text[:200]}")
+        data = resp.json()
+        return cls._extract_gemini_image(data)
+
+    @classmethod
+    def procedural_instruction_edit(
+        cls,
+        image_bytes: bytes,
+        prompt: str,
+        mask_bytes: Optional[bytes] = None,
+    ) -> bytes:
+        """
+        Applies smart procedural instruction-based image transformations using OpenCV & PIL.
+        Serves as robust offline fallback when no Gemini API key is configured or offline.
+        """
+        orig_pil = Image.open(io.BytesIO(image_bytes))
+        has_alpha = orig_pil.mode == "RGBA"
+        alpha_channel = orig_pil.split()[-1] if has_alpha else None
+
+        rgb_pil = orig_pil.convert("RGB")
+        cv_rgb = np.array(rgb_pil).astype(np.float32) / 255.0
+        p = (prompt or "").lower()
+
+        if any(k in p for k in ["sunset", "golden", "warm", "amber"]):
+            r = np.clip(cv_rgb[:, :, 0] * 1.25 + 0.05, 0, 1)
+            g = np.clip(cv_rgb[:, :, 1] * 1.05, 0, 1)
+            b = np.clip(cv_rgb[:, :, 2] * 0.80 - 0.02, 0, 1)
+            res_cv = np.dstack([r, g, b])
+            res_cv = np.clip((res_cv - 0.5) * 1.15 + 0.5, 0, 1)
+        elif any(k in p for k in ["snow", "winter", "frost", "cold", "ice"]):
+            r = np.clip(cv_rgb[:, :, 0] * 0.85, 0, 1)
+            g = np.clip(cv_rgb[:, :, 1] * 1.02 + 0.03, 0, 1)
+            b = np.clip(cv_rgb[:, :, 2] * 1.25 + 0.08, 0, 1)
+            res_cv = np.dstack([r, g, b])
+        elif any(k in p for k in ["cyberpunk", "neon", "synthwave", "futuristic"]):
+            r = np.clip(cv_rgb[:, :, 0] * 1.30 + 0.04, 0, 1)
+            g = np.clip(cv_rgb[:, :, 1] * 0.85, 0, 1)
+            b = np.clip(cv_rgb[:, :, 2] * 1.35 + 0.06, 0, 1)
+            res_cv = np.clip((np.dstack([r, g, b]) - 0.5) * 1.25 + 0.5, 0, 1)
+        elif any(k in p for k in ["black and white", "monochrome", "noir", "bw", "grayscale"]):
+            gray = 0.299 * cv_rgb[:, :, 0] + 0.587 * cv_rgb[:, :, 1] + 0.114 * cv_rgb[:, :, 2]
+            gray = np.clip((gray - 0.5) * 1.35 + 0.5, 0, 1)
+            res_cv = np.dstack([gray, gray, gray])
+        elif any(k in p for k in ["catalog", "printed", "unsharp", "crisp", "edge"]):
+            balanced = np.clip(cv_rgb * 1.05 + 0.02, 0, 1)
+            contrasted = np.clip((balanced - 0.5) * 1.22 + 0.5, 0, 1)
+            blurred = cv2.GaussianBlur(contrasted, (0, 0), sigmaX=1.2)
+            sharpened = np.clip(contrasted * 1.4 - blurred * 0.4, 0, 1)
+            u8 = (sharpened * 255).astype(np.uint8)
+            hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV).astype(np.float32)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 1.08, 0, 255)
+            res_cv = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+        elif any(k in p for k in ["album", "scale", "perspective", "lookbook", "ambient"]):
+            balanced = np.clip(cv_rgb * 1.04 + 0.01, 0, 1)
+            contrasted = np.clip((balanced - 0.5) * 1.12 + 0.5, 0, 1)
+            u8 = (contrasted * 255).astype(np.uint8)
+            hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV).astype(np.float32)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 1.05, 0, 255)
+            res_cv = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+        elif any(k in p for k in ["e-commerce", "ecommerce", "product photo", "product", "clean white", "studio lighting", "studio-minimal", "commercial"]):
+            balanced = np.clip(cv_rgb * 1.08 + 0.02, 0, 1)
+            contrasted = np.clip((balanced - 0.5) * 1.18 + 0.5, 0, 1)
+            blurred = cv2.GaussianBlur(contrasted, (0, 0), sigmaX=1.5)
+            sharpened = np.clip(contrasted * 1.3 - blurred * 0.3, 0, 1)
+            u8 = (sharpened * 255).astype(np.uint8)
+            hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV).astype(np.float32)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 1.12, 0, 255)
+            res_cv = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+        else:
+            res_cv = np.clip((cv_rgb - 0.5) * 1.15 + 0.5, 0, 1)
+            u8 = (res_cv * 255).astype(np.uint8)
+            hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV).astype(np.float32)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 1.15, 0, 255)
+            res_cv = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+
+        transformed_u8 = (np.clip(res_cv, 0, 1) * 255).astype(np.uint8)
+        transformed_pil = Image.fromarray(transformed_u8, mode="RGB")
+
+        if mask_bytes:
+            mask_pil = cls.extract_mask_pil(mask_bytes)
+            if mask_pil.size != orig_pil.size:
+                mask_pil = mask_pil.resize(orig_pil.size, Image.Resampling.NEAREST)
+            feathered_mask = mask_pil.filter(ImageFilter.GaussianBlur(radius=3))
+            final_rgb = Image.composite(transformed_pil, rgb_pil, feathered_mask)
+        else:
+            final_rgb = transformed_pil
+
+        if has_alpha and alpha_channel:
+            final_rgba = final_rgb.convert("RGBA")
+            final_rgba.putalpha(alpha_channel)
+            out_pil = final_rgba
+        else:
+            out_pil = final_rgb
+
+        out_io = io.BytesIO()
+        out_pil.save(out_io, format="PNG")
+        return out_io.getvalue()
+
+    @classmethod
+    def gemini_instruction_edit(
+        cls,
+        image_bytes: bytes,
+        prompt: str,
+        mask_bytes: Optional[bytes] = None,
+        api_key: Optional[str] = None,
+        model: str = "gemini-3.1-flash-image",
+    ) -> Tuple[bytes, str]:
+        """
+        Executes natural language instruction-based editing using Gemini 3.1 Flash Image.
+        Falls back to direct REST API if SDK fails, and to procedural OpenCV if no key is set.
+        Returns tuple of (processed_bytes, provider_description).
+        """
+        if api_key:
+            if _GENAI_AVAILABLE and genai is not None:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    orig_pil = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+                    orig_rgb = orig_pil.convert("RGB")
+                    contents = [orig_rgb]
+                    if mask_bytes:
+                        mask_pil = cls.extract_mask_pil(mask_bytes)
+                        if mask_pil.size != orig_pil.size:
+                            mask_pil = mask_pil.resize(orig_pil.size, Image.Resampling.NEAREST)
+                        contents.append(mask_pil.convert("RGB"))
+                        task_prompt = (
+                            f"Instruction-based image editing task: Modify the masked region according to: '{prompt}'. "
+                            f"Preserve all unmasked areas, ambient lighting, shadows, and perspective."
+                        )
+                    else:
+                        task_prompt = (
+                            f"Instruction-based product photo editing task: '{prompt}'. "
+                            f"Preserve product structure, identity, and realistic textures."
+                        )
+                    contents.append(task_prompt)
+                    config = genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]) if genai_types else None
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    )
+                    gen_bytes = cls._extract_gemini_image(response)
+                    return gen_bytes, f"{model} (google-genai SDK)"
+                except Exception as e:
+                    _logger.info("google-genai SDK failed (%s), attempting REST fallback", e)
+
+            try:
+                gen_bytes = cls._call_gemini_rest(
+                    prompt=prompt,
+                    image_bytes=image_bytes,
+                    mask_bytes=mask_bytes,
+                    api_key=api_key,
+                    model=model,
+                )
+                return gen_bytes, f"{model} (Direct REST API)"
+            except Exception as e:
+                _logger.info("Gemini REST API failed (%s), falling back to local procedural engine", e)
+
+        proc_bytes = cls.procedural_instruction_edit(image_bytes, prompt, mask_bytes)
+        return proc_bytes, "Local Procedural Engine (OpenCV / PIL)"
+
+    @classmethod
+    def gemini_expand(
+        cls,
+        image_bytes: bytes,
+        top: int,
+        bottom: int,
+        left: int,
+        right: int,
+        prompt: str = "",
+        api_key: Optional[str] = None,
+        model: str = "gemini-3.1-flash-image",
+    ) -> bytes:
+        """Outpaints canvas boundaries around source image using Gemini or OpenCV reflection."""
+        orig_img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+        orig_w, orig_h = orig_img.size
+        new_w = orig_w + left + right
+        new_h = orig_h + top + bottom
+
+        if api_key:
+            expand_prompt = (
+                f"Outpainting expand task: Expand background scenery in outer borders "
+                f"(top: {top}px, bottom: {bottom}px, left: {left}px, right: {right}px) around the subject. "
+                f"Ensure seamless texture and lighting continuity. {prompt}".strip()
+            )
+            if _GENAI_AVAILABLE and genai is not None:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    orig_cv = cv2.cvtColor(np.array(orig_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+                    extended_cv = cv2.copyMakeBorder(orig_cv, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+                    rgb_expanded = Image.fromarray(cv2.cvtColor(extended_cv, cv2.COLOR_BGR2RGB))
+                    config = genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]) if genai_types else None
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=[rgb_expanded, expand_prompt],
+                        config=config,
+                    )
+                    gen_bytes = cls._extract_gemini_image(response)
+                    gen_img = Image.open(io.BytesIO(gen_bytes)).convert("RGBA")
+                    if gen_img.size != (new_w, new_h):
+                        gen_img = gen_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    gen_img.paste(orig_img, (left, top), orig_img)
+                    out_io = io.BytesIO()
+                    gen_img.save(out_io, format="PNG")
+                    return out_io.getvalue()
+                except Exception as e:
+                    _logger.info("Gemini expand SDK failed (%s), attempting REST fallback", e)
+
+            try:
+                orig_cv = cv2.cvtColor(np.array(orig_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+                extended_cv = cv2.copyMakeBorder(orig_cv, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+                buf = io.BytesIO()
+                Image.fromarray(cv2.cvtColor(extended_cv, cv2.COLOR_BGR2RGB)).save(buf, format="PNG")
+                gen_bytes = cls._call_gemini_rest(
+                    prompt=expand_prompt,
+                    image_bytes=buf.getvalue(),
+                    api_key=api_key,
+                    model=model,
+                )
+                gen_img = Image.open(io.BytesIO(gen_bytes)).convert("RGBA")
+                if gen_img.size != (new_w, new_h):
+                    gen_img = gen_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                gen_img.paste(orig_img, (left, top), orig_img)
+                out_io = io.BytesIO()
+                gen_img.save(out_io, format="PNG")
+                return out_io.getvalue()
+            except Exception as e:
+                _logger.info("Gemini expand REST API failed (%s), using local fallback", e)
+
+        try:
+            mask_expanded = Image.new("L", (new_w, new_h), 255)
+            mask_expanded.paste(Image.new("L", (orig_w, orig_h), 0), (left, top))
+            orig_cv = cv2.cvtColor(np.array(orig_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+            extended_cv = cv2.copyMakeBorder(orig_cv, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+            blurred_cv = cv2.GaussianBlur(extended_cv, (21, 21), 0)
+            blurred_cv[top : top + orig_h, left : left + orig_w] = orig_cv
+
+            buf_img = io.BytesIO()
+            buf_mask = io.BytesIO()
+            Image.fromarray(cv2.cvtColor(blurred_cv, cv2.COLOR_BGR2RGB)).save(buf_img, format="PNG")
+            mask_expanded.save(buf_mask, format="PNG")
+            return cls.local_inpaint(buf_img.getvalue(), buf_mask.getvalue())
+        except Exception:
+            expanded_canvas = Image.new("RGBA", (new_w, new_h), (255, 255, 255, 255))
+            expanded_canvas.paste(orig_img, (left, top))
+            out_io = io.BytesIO()
+            expanded_canvas.save(out_io, format="PNG")
+            return out_io.getvalue()
+
+    @classmethod
+    def gemini_fill(
+        cls,
+        image_bytes: bytes,
+        mask_bytes: bytes,
+        prompt: str = "",
+        api_key: Optional[str] = None,
+        model: str = "gemini-3.1-flash-image",
+    ) -> bytes:
+        """Performs generative inpainting on masked region using Gemini or OpenCV Telea."""
+        if api_key:
+            orig_img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+            mask_pil = cls.extract_mask_pil(mask_bytes)
+            if mask_pil.size != orig_img.size:
+                mask_pil = mask_pil.resize(orig_img.size, Image.Resampling.NEAREST)
+            fill_prompt = (
+                f"Generative inpainting task: In the white masked region, seamlessly synthesize: {prompt}. "
+                f"Blend with surrounding environment and lighting."
+            )
+
+            if _GENAI_AVAILABLE and genai is not None:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    config = genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]) if genai_types else None
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=[orig_img.convert("RGB"), mask_pil.convert("RGB"), fill_prompt],
+                        config=config,
+                    )
+                    gen_bytes = cls._extract_gemini_image(response)
+                    gen_img = Image.open(io.BytesIO(gen_bytes)).convert("RGBA")
+                    if gen_img.size != orig_img.size:
+                        gen_img = gen_img.resize(orig_img.size, Image.Resampling.LANCZOS)
+                    feathered_mask = mask_pil.filter(ImageFilter.GaussianBlur(radius=3))
+                    final_img = Image.composite(gen_img, orig_img, feathered_mask)
+                    out_io = io.BytesIO()
+                    final_img.save(out_io, format="PNG")
+                    return out_io.getvalue()
+                except Exception as e:
+                    _logger.info("Gemini fill SDK failed (%s), attempting REST fallback", e)
+
+            try:
+                gen_bytes = cls._call_gemini_rest(
+                    prompt=fill_prompt,
+                    image_bytes=image_bytes,
+                    mask_bytes=mask_bytes,
+                    api_key=api_key,
+                    model=model,
+                )
+                gen_img = Image.open(io.BytesIO(gen_bytes)).convert("RGBA")
+                if gen_img.size != orig_img.size:
+                    gen_img = gen_img.resize(orig_img.size, Image.Resampling.LANCZOS)
+                feathered_mask = mask_pil.filter(ImageFilter.GaussianBlur(radius=3))
+                final_img = Image.composite(gen_img, orig_img, feathered_mask)
+                out_io = io.BytesIO()
+                final_img.save(out_io, format="PNG")
+                return out_io.getvalue()
+            except Exception as e:
+                _logger.info("Gemini fill REST API failed (%s), falling back to local inpainting", e)
+
+        return cls.local_inpaint(image_bytes, mask_bytes)
+
+    @classmethod
+    def magic_erase(
+        cls,
+        image_bytes: bytes,
+        mask_bytes: bytes,
+        api_key: Optional[str] = None,
+        model: str = "gemini-3.1-flash-image",
+    ) -> bytes:
+        """Content-aware object eraser."""
+        return cls.gemini_fill(
+            image_bytes=image_bytes,
+            mask_bytes=mask_bytes,
+            prompt="Remove the highlighted object completely and blend the background scenery naturally with surrounding colors and textures.",
+            api_key=api_key,
+            model=model,
+        )
 
     # -------------------------------------------------------------------------
     # Helper Utilities

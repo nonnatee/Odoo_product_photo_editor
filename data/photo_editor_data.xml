@@ -31,17 +31,128 @@
             <field name="key">product_photo_editor.cron_batch_size</field>
             <field name="value">25</field>
         </record>
+        <record id="param_gemini_model" model="ir.config_parameter">
+            <field name="key">product_photo_editor.gemini_model</field>
+            <field name="value">gemini-3.1-flash-image</field>
+        </record>
+        <record id="param_backup_original_to_gallery" model="ir.config_parameter">
+            <field name="key">product_photo_editor.backup_original_to_gallery</field>
+            <field name="value">True</field>
+        </record>
 
-        <!-- Multi-Record Action for Bulk Optimization from Product List View -->
-        <record id="action_server_batch_photo_editor" model="ir.actions.server">
-            <field name="name">✨ Bulk AI Photo Optimization</field>
+        <!-- Default Presets -->
+        <record id="preset_studio_minimal" model="product.photo.editor.preset">
+            <field name="name">Studio Minimal</field>
+            <field name="code">studio_minimal</field>
+            <field name="sequence">10</field>
+            <field name="show_in_quick_actions">True</field>
+            <field name="ai_mode">gemini_edit</field>
+            <field name="background_style">studio_soft_shadow</field>
+            <field name="dimensions">square_2000</field>
+            <field name="padding_percent">8.0</field>
+            <field name="export_format">JPEG</field>
+            <field name="export_quality">92</field>
+            <field name="apply_perspective">True</field>
+            <field name="apply_color_correction">True</field>
+            <field name="apply_auto_white_balance">True</field>
+            <field name="apply_contrast_enhancement">True</field>
+            <field name="apply_sharpening">True</field>
+            <field name="prompt_instruction">Convert this product photo into a clean, studio-minimal e-commerce image. Apply even commercial studio lighting, eliminate dust, blemishes and clutter, ground the product with a natural soft contact shadow, and ensure color fidelity against pure white.</field>
+            <field name="description">Amazon/Shopify compliant 2000x2000 pure white presentation with grounding contact shadow.</field>
+        </record>
+
+        <record id="preset_album_scale" model="product.photo.editor.preset">
+            <field name="name">Album w/ Scale</field>
+            <field name="code">album_scale</field>
+            <field name="sequence">20</field>
+            <field name="show_in_quick_actions">True</field>
+            <field name="ai_mode">gemini_edit</field>
+            <field name="background_style">studio_neutral</field>
+            <field name="dimensions">portrait_4_5</field>
+            <field name="padding_percent">10.0</field>
+            <field name="export_format">JPEG</field>
+            <field name="export_quality">92</field>
+            <field name="apply_perspective">True</field>
+            <field name="apply_color_correction">True</field>
+            <field name="apply_auto_white_balance">True</field>
+            <field name="apply_contrast_enhancement">True</field>
+            <field name="apply_sharpening">False</field>
+            <field name="prompt_instruction">High-end product lookbook presentation with realistic scale perspective, soft ambient occlusion, contextual framing, and subtle environmental depth against studio neutral grey.</field>
+            <field name="description">Fashion/Lookbook 1600x2000 (4:5) framing with soft ambient occlusion and studio neutral background.</field>
+        </record>
+
+        <record id="preset_printed_catalog" model="product.photo.editor.preset">
+            <field name="name">Printed Catalog</field>
+            <field name="code">printed_catalog</field>
+            <field name="sequence">30</field>
+            <field name="show_in_quick_actions">True</field>
+            <field name="ai_mode">gemini_edit</field>
+            <field name="background_style">white</field>
+            <field name="dimensions">square_2000</field>
+            <field name="padding_percent">8.0</field>
+            <field name="export_format">JPEG</field>
+            <field name="export_quality">95</field>
+            <field name="apply_perspective">True</field>
+            <field name="apply_color_correction">True</field>
+            <field name="apply_auto_white_balance">True</field>
+            <field name="apply_contrast_enhancement">True</field>
+            <field name="apply_sharpening">True</field>
+            <field name="prompt_instruction">Ultra-sharp print-ready catalog presentation with crisp edge boundaries, accurate neutral white balance, high-contrast unsharp mask detail, and zero background artifacting.</field>
+            <field name="description">Ultra-crisp 2000x2000 print catalog standard with enhanced unsharp mask and edge definition.</field>
+        </record>
+
+        <record id="preset_cutout_transparent" model="product.photo.editor.preset">
+            <field name="name">Transparent Background Cutout</field>
+            <field name="code">cutout_transparent</field>
+            <field name="sequence">40</field>
+            <field name="show_in_quick_actions">False</field>
+            <field name="ai_mode">cutout_only</field>
+            <field name="background_style">transparent</field>
+            <field name="dimensions">original</field>
+            <field name="padding_percent">0.0</field>
+            <field name="export_format">PNG</field>
+            <field name="export_quality">95</field>
+            <field name="apply_perspective">False</field>
+            <field name="apply_color_correction">False</field>
+            <field name="prompt_instruction">Remove background completely, preserving smooth antialiased subject edges with clean alpha cutout.</field>
+            <field name="description">Isolated subject cutout with transparent alpha channel in lossless PNG.</field>
+        </record>
+
+        <!-- Multi-Record Actions for Bulk Preset Execution in Product List View -->
+        <record id="action_server_batch_studio_minimal" model="ir.actions.server">
+            <field name="name">⚡ Bulk Studio-Minimal Optimization</field>
             <field name="model_id" ref="product.model_product_template"/>
             <field name="binding_model_id" ref="product.model_product_template"/>
             <field name="binding_view_types">list</field>
             <field name="state">code</field>
-            <field name="code">
-action = records.action_batch_photo_editor()
-            </field>
+            <field name="code">action = records.action_batch_studio_minimal()</field>
+        </record>
+
+        <record id="action_server_batch_album_scale" model="ir.actions.server">
+            <field name="name">⚡ Bulk Album w/ Scale Optimization</field>
+            <field name="model_id" ref="product.model_product_template"/>
+            <field name="binding_model_id" ref="product.model_product_template"/>
+            <field name="binding_view_types">list</field>
+            <field name="state">code</field>
+            <field name="code">action = records.action_batch_album_scale()</field>
+        </record>
+
+        <record id="action_server_batch_printed_catalog" model="ir.actions.server">
+            <field name="name">⚡ Bulk Printed Catalog Optimization</field>
+            <field name="model_id" ref="product.model_product_template"/>
+            <field name="binding_model_id" ref="product.model_product_template"/>
+            <field name="binding_view_types">list</field>
+            <field name="state">code</field>
+            <field name="code">action = records.action_batch_printed_catalog()</field>
+        </record>
+
+        <record id="action_server_batch_cutout_transparent" model="ir.actions.server">
+            <field name="name">⚡ Bulk Transparent Background Cutout</field>
+            <field name="model_id" ref="product.model_product_template"/>
+            <field name="binding_model_id" ref="product.model_product_template"/>
+            <field name="binding_view_types">list</field>
+            <field name="state">code</field>
+            <field name="code">action = records.action_batch_cutout_transparent()</field>
         </record>
     </data>
 </odoo>

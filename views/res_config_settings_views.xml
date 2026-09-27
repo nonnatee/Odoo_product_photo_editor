@@ -8,6 +8,15 @@
         <field name="arch" type="xml">
             <xpath expr="//form" position="inside">
                 <app data-string="Product Photo Editor" string="Photo Editor" name="product_editor">
+                    <block title="Google Gemini AI Integration" name="photo_editor_gemini">
+                        <setting id="setting_gemini_api_key" title="Gemini API Key" help="API Key for Google Gemini 3.1 Flash Image instruction-based editing, relighting, and generative fill. Leave empty to use local offline computer vision engine.">
+                            <field name="photo_editor_gemini_api_key" password="True"/>
+                        </setting>
+                        <setting id="setting_gemini_model" title="Gemini Model" help="Model used for multimodal image editing instructions.">
+                            <field name="photo_editor_gemini_model"/>
+                        </setting>
+                    </block>
+
                     <block title="AI Connectors &amp; Segmentation Engines" name="photo_editor_providers">
                         <setting id="setting_default_provider" help="Choose default AI segmentation provider. Local Engine runs offline without API keys.">
                             <field name="photo_editor_default_provider"/>
@@ -41,6 +50,9 @@
                         </setting>
                         <setting id="setting_default_dimensions" help="Default output canvas dimensions (e.g. 2000x2000 for Amazon).">
                             <field name="photo_editor_default_dimensions"/>
+                        </setting>
+                        <setting id="setting_backup_original" title="Non-Destructive Image Backup" help="Automatically save original raw product photos to the Extra Media Gallery (product.image) when applying AI edits.">
+                            <field name="photo_editor_backup_original_to_gallery"/>
                         </setting>
                     </block>
 

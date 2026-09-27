@@ -10,13 +10,19 @@
                         <!-- Left Configuration Column -->
                         <div class="col-lg-6 col-md-12 border-end pe-4">
                             <h4 class="mb-3">1. Upload &amp; Select Presets</h4>
+                            <div class="mb-3 p-2 bg-light rounded border">
+                                <label for="preset_id" class="fw-bold mb-1"><i class="fa fa-sliders me-1"/> Quick Preset Profile</label>
+                                <field name="preset_id" options="{'no_create': True}" placeholder="⚡ Select Preset (e.g. Studio Minimal, Album w/ Scale, Printed Catalog)..."/>
+                            </div>
                             <group>
                                 <field name="product_id" readonly="1"/>
                                 <field name="product_variant_id" options="{'no_create': True}" invisible="not product_id"/>
                                 <field name="image_original" widget="image" class="oe_avatar" style="width: 220px; height: 220px; object-fit: contain;"/>
                             </group>
 
-                            <group string="AI Engine &amp; Style">
+                            <group string="AI Engine &amp; Prompt Instruction">
+                                <field name="ai_mode"/>
+                                <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" placeholder="e.g. Clean studio minimal e-commerce lighting with grounding shadow..."/>
                                 <field name="service_provider"/>
                                 <field name="background_style"/>
                                 <field name="custom_bg_color" invisible="background_style != 'custom_color'"/>

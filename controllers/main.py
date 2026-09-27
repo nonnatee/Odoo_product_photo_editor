@@ -82,21 +82,32 @@ class ProductPhotoEditorController(http.Controller):
             if not image_bytes:
                 return self._json_response({'error': 'Missing required parameter: image (file or base64)'}, status=400)
 
-            # Extract options
-            background_style = payload.get('background_style', 'white')
-            custom_bg_color = payload.get('custom_bg_color', '#FFFFFF')
-            dimensions = payload.get('dimensions', 'square_2000')
-            target_width = int(payload.get('target_width', 0)) if payload.get('target_width') else None
-            target_height = int(payload.get('target_height', 0)) if payload.get('target_height') else None
-            export_format = payload.get('export_format', 'JPEG').upper()
-            export_quality = int(payload.get('export_quality', 90))
-            padding_percent = float(payload.get('padding_percent', 8.0))
+            # Extract preset if requested
+            preset_code = payload.get('preset_code')
+            preset_rec = None
+            if preset_code and request and request.env and 'product.photo.editor.preset' in request.env:
+                try:
+                    preset_rec = request.env['product.photo.editor.preset'].search([('code', '=', preset_code)], limit=1)
+                except Exception:
+                    preset_rec = None
 
-            apply_perspective = str(payload.get('apply_perspective', 'true')).lower() in ('true', '1')
-            apply_color_correction = str(payload.get('apply_color_correction', 'true')).lower() in ('true', '1')
-            apply_auto_white_balance = str(payload.get('apply_auto_white_balance', 'true')).lower() in ('true', '1')
-            apply_contrast_enhancement = str(payload.get('apply_contrast_enhancement', 'true')).lower() in ('true', '1')
-            apply_sharpening = str(payload.get('apply_sharpening', 'true')).lower() in ('true', '1')
+            # Extract options (preset values take precedence if not overridden)
+            background_style = payload.get('background_style') or (preset_rec.background_style if preset_rec else 'white')
+            custom_bg_color = payload.get('custom_bg_color') or (preset_rec.custom_bg_color if preset_rec else '#FFFFFF')
+            dimensions = payload.get('dimensions') or (preset_rec.dimensions if preset_rec else 'square_2000')
+            target_width = int(payload.get('target_width', 0)) if payload.get('target_width') else (preset_rec.target_width if preset_rec and preset_rec.target_width else None)
+            target_height = int(payload.get('target_height', 0)) if payload.get('target_height') else (preset_rec.target_height if preset_rec and preset_rec.target_height else None)
+            export_format = (payload.get('export_format') or (preset_rec.export_format if preset_rec else 'JPEG')).upper()
+            export_quality = int(payload.get('export_quality') or (preset_rec.export_quality if preset_rec else 90))
+            padding_percent = float(payload.get('padding_percent') if payload.get('padding_percent') is not None else (preset_rec.padding_percent if preset_rec else 8.0))
+            prompt_instruction = payload.get('prompt_instruction') or (preset_rec.prompt_instruction if preset_rec else None)
+            ai_mode = payload.get('ai_mode') or (preset_rec.ai_mode if preset_rec else 'gemini_edit')
+
+            apply_perspective = str(payload.get('apply_perspective', preset_rec.apply_perspective if preset_rec else 'true')).lower() in ('true', '1')
+            apply_color_correction = str(payload.get('apply_color_correction', preset_rec.apply_color_correction if preset_rec else 'true')).lower() in ('true', '1')
+            apply_auto_white_balance = str(payload.get('apply_auto_white_balance', preset_rec.apply_auto_white_balance if preset_rec else 'true')).lower() in ('true', '1')
+            apply_contrast_enhancement = str(payload.get('apply_contrast_enhancement', preset_rec.apply_contrast_enhancement if preset_rec else 'true')).lower() in ('true', '1')
+            apply_sharpening = str(payload.get('apply_sharpening', preset_rec.apply_sharpening if preset_rec else 'true')).lower() in ('true', '1')
             service_provider = payload.get('service_provider', 'local')
 
             # Fetch provider configuration
@@ -107,6 +118,8 @@ class ProductPhotoEditorController(http.Controller):
                 'photoroom_api_key': ICP.get_param('product_photo_editor.photoroom_api_key', ''),
                 'custom_ai_endpoint_url': ICP.get_param('product_photo_editor.custom_ai_endpoint_url', ''),
                 'custom_ai_api_key': ICP.get_param('product_photo_editor.custom_ai_api_key', ''),
+                'gemini_api_key': ICP.get_param('product_photo_editor.gemini_api_key', ''),
+                'gemini_model': ICP.get_param('product_photo_editor.gemini_model', 'gemini-3.1-flash-image'),
             }
 
             # 2. Run Image Pipeline
@@ -127,6 +140,10 @@ class ProductPhotoEditorController(http.Controller):
                 padding_percent=padding_percent,
                 service_provider=service_provider,
                 provider_config=provider_config,
+                prompt_instruction=prompt_instruction,
+                ai_mode=ai_mode,
+                gemini_api_key=provider_config.get('gemini_api_key'),
+                gemini_model=provider_config.get('gemini_model', 'gemini-3.1-flash-image'),
             )
 
             processed_b64 = base64.b64encode(result['image_bytes']).decode('ascii')
@@ -137,7 +154,7 @@ class ProductPhotoEditorController(http.Controller):
             if product_id:
                 product = request.env['product.template'].browse(product_id)
                 if product.exists():
-                    job = request.env['product.photo.editor'].create({
+                    job_vals = {
                         'product_id': product.id,
                         'image_original': base64.b64encode(image_bytes),
                         'image_processed': processed_b64,
@@ -153,7 +170,15 @@ class ProductPhotoEditorController(http.Controller):
                         'processed_file_size': result['file_size'],
                         'duration_sec': result['duration_sec'],
                         'transformation_log': "\n".join(f"- {s}" for s in result['steps_applied']),
-                    })
+                    }
+                    if preset_rec:
+                        job_vals['preset_id'] = preset_rec.id
+                    if prompt_instruction:
+                        job_vals['prompt_instruction'] = prompt_instruction
+                    if ai_mode:
+                        job_vals['ai_mode'] = ai_mode
+
+                    job = request.env['product.photo.editor'].create(job_vals)
                     job_id = job.id
 
                     if str(payload.get('apply_to_product', 'false')).lower() in ('true', '1'):
@@ -190,7 +215,25 @@ class ProductPhotoEditorController(http.Controller):
         csrf=False,
     )
     def api_get_presets(self, **kw):
-        """Returns catalogue of supported styles, dimensions, and providers."""
+        """Returns catalogue of supported styles, dimensions, providers, and configured presets."""
+        presets_list = []
+        if request and hasattr(request, 'env') and request.env and 'product.photo.editor.preset' in request.env:
+            try:
+                db_presets = request.env['product.photo.editor.preset'].search([])
+                for p in db_presets:
+                    presets_list.append({
+                        'id': p.id,
+                        'name': p.name,
+                        'code': p.code,
+                        'ai_mode': p.ai_mode,
+                        'background_style': p.background_style,
+                        'dimensions': p.dimensions,
+                        'prompt_instruction': p.prompt_instruction,
+                        'show_in_quick_actions': p.show_in_quick_actions,
+                    })
+            except Exception:
+                pass
+
         data = {
             'background_styles': [{'id': s[0], 'name': s[1]} for s in ImagePipeline.BACKGROUND_STYLES],
             'dimension_presets': [
@@ -199,6 +242,7 @@ class ProductPhotoEditorController(http.Controller):
             ],
             'providers': [{'id': p[0], 'name': p[1]} for p in ImagePipeline.PROVIDERS],
             'export_formats': ['JPEG', 'PNG', 'WEBP'],
+            'preset_profiles': presets_list,
         }
         return self._json_response(data)
 
