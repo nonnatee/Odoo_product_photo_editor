@@ -216,6 +216,26 @@ class ProductPhotoEditor(models.Model):
         ('opencv_only', 'Procedural Computer Vision (Offline)'),
     ], string='AI Pipeline Mode', default='gemini_edit')
 
+    @api.onchange('preset_id')
+    def _onchange_preset_id(self):
+        if self.preset_id:
+            p = self.preset_id
+            self.background_style = p.background_style
+            self.custom_bg_color = p.custom_bg_color or '#FFFFFF'
+            self.dimensions = p.dimensions
+            self.target_width = p.target_width
+            self.target_height = p.target_height
+            self.export_format = p.export_format
+            self.export_quality = p.export_quality
+            self.padding_percent = p.padding_percent
+            self.apply_perspective = p.apply_perspective
+            self.apply_color_correction = p.apply_color_correction
+            self.apply_auto_white_balance = p.apply_auto_white_balance
+            self.apply_contrast_enhancement = p.apply_contrast_enhancement
+            self.apply_sharpening = p.apply_sharpening
+            self.prompt_instruction = p.prompt_instruction
+            self.ai_mode = p.ai_mode
+
     # Workflow Status
     status = fields.Selection(
         [

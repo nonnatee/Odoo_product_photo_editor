@@ -20,9 +20,16 @@
                                 <field name="image_original" widget="image" class="oe_avatar" style="width: 220px; height: 220px; object-fit: contain;"/>
                             </group>
 
-                            <group string="AI Engine &amp; Prompt Instruction">
+                            <group string="AI Pipeline Mode">
                                 <field name="ai_mode"/>
-                                <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" placeholder="e.g. Clean studio minimal e-commerce lighting with grounding shadow..."/>
+                                <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" required="ai_mode == 'gemini_edit'" placeholder="e.g. Clean studio minimal e-commerce lighting with grounding shadow..."/>
+                            </group>
+
+                            <div class="alert alert-info py-2 px-3 small my-2" invisible="ai_mode != 'gemini_edit'">
+                                <i class="fa fa-magic me-1"/> <strong>Offloaded External AI Service:</strong> Scene creation, relighting, grounding shadows, and background composition are completely handled by Gemini AI Instruct. Local background removal, canvas dimension presets, and computer vision filters are bypassed.
+                            </div>
+
+                            <group string="Procedural Engine &amp; Background" invisible="ai_mode == 'gemini_edit'">
                                 <field name="service_provider"/>
                                 <field name="background_style"/>
                                 <field name="custom_bg_color" invisible="background_style != 'custom_color'"/>
@@ -32,9 +39,12 @@
                                 <field name="padding_percent"/>
                             </group>
 
-                            <group string="Output Format &amp; Enhancements">
+                            <group string="Output Format">
                                 <field name="export_format"/>
                                 <field name="export_quality"/>
+                            </group>
+
+                            <group string="Computer Vision Filters" invisible="ai_mode == 'gemini_edit'">
                                 <field name="apply_perspective"/>
                                 <field name="apply_color_correction"/>
                                 <field name="apply_auto_white_balance" invisible="not apply_color_correction"/>

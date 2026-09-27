@@ -282,7 +282,7 @@ class ImagePipeline:
         service_provider: str = 'local',
         provider_config: Optional[Dict[str, Any]] = None,
         prompt_instruction: Optional[str] = None,
-        ai_mode: str = 'gemini_edit',
+        ai_mode: Optional[str] = 'cutout_only',
         gemini_api_key: Optional[str] = None,
         gemini_model: str = 'gemini-3.1-flash-image',
     ) -> Dict[str, Any]:
@@ -325,154 +325,170 @@ class ImagePipeline:
 
         steps_applied.append(f"Decoded input image ({orig_w}x{orig_h})")
 
-        # 1b. AI Instruction Edit or Generative Canvas Expand if requested
-        if prompt_instruction and ai_mode == 'gemini_edit':
+        # ---------------------------------------------------------------------
+        # External AI Offload: Gemini Instruction Edit & Relight
+        # When ai_mode == 'gemini_edit', the entire editing, lighting, background,
+        # and composition workflow is offloaded to the external service.
+        # Local background removal (service_provider), background styling,
+        # canvas dimension presets/padding, and CV filters do not affect output.
+        # ---------------------------------------------------------------------
+        if ai_mode == 'gemini_edit':
+            prompt = (prompt_instruction or "").strip() or "Clean studio minimal e-commerce lighting with subtle grounding shadow on crisp white background"
             try:
                 edited_bytes, edit_provider = cls.gemini_instruction_edit(
                     image_bytes=image_bytes,
-                    prompt=prompt_instruction,
+                    prompt=prompt,
                     api_key=gemini_api_key,
                     model=gemini_model,
                 )
                 image_bytes = edited_bytes
                 pil_img = Image.open(io.BytesIO(image_bytes))
-                pil_img = ImageOps.exif_transpose(pil_img)
-                orig_w, orig_h = pil_img.size
-                steps_applied.append(f"Applied AI instruction edit via {edit_provider}")
+                try:
+                    pil_img = ImageOps.exif_transpose(pil_img)
+                except Exception:
+                    pass
+                final_w, final_h = pil_img.size
+                steps_applied.append(f"Offloaded to external service: AI instruction edit via {edit_provider}")
             except Exception as e:
-                _logger.warning("Instruction edit encountered issue, continuing: %s", e)
+                _logger.warning("Instruction edit encountered issue, continuing with source image: %s", e)
+                final_w, final_h = orig_w, orig_h
+                steps_applied.append(f"External service issue ({e}); preserved source image")
 
-        elif prompt_instruction and ai_mode == 'opencv_only':
-            try:
-                edited_bytes = cls.procedural_instruction_edit(
-                    image_bytes=image_bytes,
-                    prompt=prompt_instruction,
-                )
-                image_bytes = edited_bytes
-                pil_img = Image.open(io.BytesIO(image_bytes))
-                pil_img = ImageOps.exif_transpose(pil_img)
-                orig_w, orig_h = pil_img.size
-                steps_applied.append("Applied procedural CV instruction filter")
-            except Exception as e:
-                _logger.warning("Procedural filter encountered issue, continuing: %s", e)
+            steps_applied.append("External AI mode: bypassed local background removal, canvas dimension presets, and CV filters")
+            final_canvas = pil_img
 
-        elif ai_mode == 'expand':
-            try:
-                pad_ratio = max(0.05, min(0.3, padding_percent / 100.0))
-                pad_w = int(orig_w * pad_ratio)
-                pad_h = int(orig_h * pad_ratio)
-                expanded_bytes = cls.gemini_expand(
-                    image_bytes=image_bytes,
-                    top=pad_h, bottom=pad_h, left=pad_w, right=pad_w,
-                    prompt=prompt_instruction or "",
-                    api_key=gemini_api_key,
-                    model=gemini_model,
-                )
-                image_bytes = expanded_bytes
-                pil_img = Image.open(io.BytesIO(image_bytes))
-                pil_img = ImageOps.exif_transpose(pil_img)
-                orig_w, orig_h = pil_img.size
-                steps_applied.append("Applied generative canvas expand")
-            except Exception as e:
-                _logger.warning("Generative expand encountered issue, continuing: %s", e)
-
-
-        # Check if input already has an existing alpha mask/cutout
-        has_existing_alpha = False
-        existing_alpha_channel = None
-        if pil_img.mode in ('RGBA', 'LA') or (pil_img.mode == 'P' and 'transparency' in pil_img.info):
-            rgba_temp = pil_img.convert('RGBA')
-            alpha_extrema = rgba_temp.getextrema()[3]
-            if alpha_extrema[0] < 250:
-                has_existing_alpha = True
-                existing_alpha_channel = rgba_temp.split()[-1]
-
-        # Convert to OpenCV BGR for computer vision operations
-        # If image has alpha, composite onto white before color operations to avoid dark fringes
-        if has_existing_alpha:
-            white_bg = Image.new('RGB', pil_img.size, (255, 255, 255))
-            white_bg.paste(pil_img.convert('RGBA'), mask=existing_alpha_channel)
-            cv_img = cls._pil_to_cv2(white_bg)
         else:
-            cv_img = cls._pil_to_cv2(pil_img.convert('RGB'))
+            # 1b. Procedural instruction edit or Generative Canvas Expand
+            if prompt_instruction and ai_mode == 'opencv_only':
+                try:
+                    edited_bytes = cls.procedural_instruction_edit(
+                        image_bytes=image_bytes,
+                        prompt=prompt_instruction,
+                    )
+                    image_bytes = edited_bytes
+                    pil_img = Image.open(io.BytesIO(image_bytes))
+                    pil_img = ImageOps.exif_transpose(pil_img)
+                    orig_w, orig_h = pil_img.size
+                    steps_applied.append("Applied procedural CV instruction filter")
+                except Exception as e:
+                    _logger.warning("Procedural filter encountered issue, continuing: %s", e)
 
-        # 2. Perspective correction / Auto-deskewing
-        if apply_perspective:
-            try:
-                cv_img, deskew_applied = cls._correct_perspective_or_deskew(cv_img)
-                if deskew_applied:
-                    steps_applied.append("Applied perspective correction & deskewing")
-            except Exception as e:
-                _logger.warning("Perspective correction failed, continuing: %s", e)
+            elif ai_mode == 'expand':
+                try:
+                    pad_ratio = max(0.05, min(0.3, padding_percent / 100.0))
+                    pad_w = int(orig_w * pad_ratio)
+                    pad_h = int(orig_h * pad_ratio)
+                    expanded_bytes = cls.gemini_expand(
+                        image_bytes=image_bytes,
+                        top=pad_h, bottom=pad_h, left=pad_w, right=pad_w,
+                        prompt=prompt_instruction or "",
+                        api_key=gemini_api_key,
+                        model=gemini_model,
+                    )
+                    image_bytes = expanded_bytes
+                    pil_img = Image.open(io.BytesIO(image_bytes))
+                    pil_img = ImageOps.exif_transpose(pil_img)
+                    orig_w, orig_h = pil_img.size
+                    steps_applied.append("Applied generative canvas expand")
+                except Exception as e:
+                    _logger.warning("Generative expand encountered issue, continuing: %s", e)
 
-        # 3. Color and Lighting adjustments
-        if apply_color_correction:
-            if apply_auto_white_balance:
-                cv_img = cls._auto_white_balance(cv_img)
-                steps_applied.append("Applied Gray-World auto white balance")
-            if apply_contrast_enhancement:
-                cv_img = cls._enhance_contrast_clahe(cv_img)
-                steps_applied.append("Applied CLAHE adaptive contrast & exposure")
-            if apply_sharpening:
-                cv_img = cls._sharpen_image(cv_img)
-                steps_applied.append("Applied unsharp mask sharpening")
+            # Check if input already has an existing alpha mask/cutout
+            has_existing_alpha = False
+            existing_alpha_channel = None
+            if pil_img.mode in ('RGBA', 'LA') or (pil_img.mode == 'P' and 'transparency' in pil_img.info):
+                rgba_temp = pil_img.convert('RGBA')
+                alpha_extrema = rgba_temp.getextrema()[3]
+                if alpha_extrema[0] < 250:
+                    has_existing_alpha = True
+                    existing_alpha_channel = rgba_temp.split()[-1]
 
-        # Convert back to PIL
-        rgb_pil = cls._cv2_to_pil(cv_img)
+            # Convert to OpenCV BGR for computer vision operations
+            # If image has alpha, composite onto white before color operations to avoid dark fringes
+            if has_existing_alpha:
+                white_bg = Image.new('RGB', pil_img.size, (255, 255, 255))
+                white_bg.paste(pil_img.convert('RGBA'), mask=existing_alpha_channel)
+                cv_img = cls._pil_to_cv2(white_bg)
+            else:
+                cv_img = cls._pil_to_cv2(pil_img.convert('RGB'))
 
-        # 4. Background Removal / Foreground Cutout (RGBA)
-        rgba_cutout, provider_msg = cls._remove_background(
-            rgb_pil=rgb_pil,
-            image_bytes_orig=image_bytes,
-            provider=service_provider,
-            config=provider_config,
-            has_existing_alpha=has_existing_alpha,
-            existing_alpha_channel=existing_alpha_channel,
-        )
-        steps_applied.append(f"Segmented foreground cutout using {provider_msg}")
+            # 2. Perspective correction / Auto-deskewing
+            if apply_perspective:
+                try:
+                    cv_img, deskew_applied = cls._correct_perspective_or_deskew(cv_img)
+                    if deskew_applied:
+                        steps_applied.append("Applied perspective correction & deskewing")
+                except Exception as e:
+                    _logger.warning("Perspective correction failed, continuing: %s", e)
 
-        # 5. Determine target canvas dimensions
-        if target_width and target_height and target_width > 0 and target_height > 0:
-            final_w, final_h = target_width, target_height
-        elif dimensions in cls.DIMENSION_PRESETS and cls.DIMENSION_PRESETS[dimensions]:
-            final_w, final_h = cls.DIMENSION_PRESETS[dimensions]
-        else:
-            final_w, final_h = orig_w, orig_h
+            # 3. Color and Lighting adjustments
+            if apply_color_correction:
+                if apply_auto_white_balance:
+                    cv_img = cls._auto_white_balance(cv_img)
+                    steps_applied.append("Applied Gray-World auto white balance")
+                if apply_contrast_enhancement:
+                    cv_img = cls._enhance_contrast_clahe(cv_img)
+                    steps_applied.append("Applied CLAHE adaptive contrast & exposure")
+                if apply_sharpening:
+                    cv_img = cls._sharpen_image(cv_img)
+                    steps_applied.append("Applied unsharp mask sharpening")
 
-        # 6. Fit cutout onto standardized canvas with padding
-        padding_ratio = max(0.0, min(0.4, padding_percent / 100.0))
-        avail_w = int(final_w * (1.0 - 2 * padding_ratio))
-        avail_h = int(final_h * (1.0 - 2 * padding_ratio))
+            # Convert back to PIL
+            rgb_pil = cls._cv2_to_pil(cv_img)
 
-        cutout_w, cutout_h = rgba_cutout.size
-        scale = min(avail_w / max(cutout_w, 1), avail_h / max(cutout_h, 1))
-        new_cutout_w = max(1, int(cutout_w * scale))
-        new_cutout_h = max(1, int(cutout_h * scale))
+            # 4. Background Removal / Foreground Cutout (RGBA)
+            rgba_cutout, provider_msg = cls._remove_background(
+                rgb_pil=rgb_pil,
+                image_bytes_orig=image_bytes,
+                provider=service_provider,
+                config=provider_config,
+                has_existing_alpha=has_existing_alpha,
+                existing_alpha_channel=existing_alpha_channel,
+            )
+            steps_applied.append(f"Segmented foreground cutout using {provider_msg}")
 
-        resized_cutout = rgba_cutout.resize((new_cutout_w, new_cutout_h), Image.Resampling.LANCZOS)
-        steps_applied.append(f"Standardized cutout to {new_cutout_w}x{new_cutout_h} (Canvas: {final_w}x{final_h}, Padding: {padding_percent}%)")
+            # 5. Determine target canvas dimensions
+            if target_width and target_height and target_width > 0 and target_height > 0:
+                final_w, final_h = target_width, target_height
+            elif dimensions in cls.DIMENSION_PRESETS and cls.DIMENSION_PRESETS[dimensions]:
+                final_w, final_h = cls.DIMENSION_PRESETS[dimensions]
+            else:
+                final_w, final_h = orig_w, orig_h
 
-        # Cutout positioning (centered horizontally, grounded vertically)
-        pos_x = (final_w - new_cutout_w) // 2
-        pos_y = (final_h - new_cutout_h) // 2
+            # 6. Fit cutout onto standardized canvas with padding
+            padding_ratio = max(0.0, min(0.4, padding_percent / 100.0))
+            avail_w = int(final_w * (1.0 - 2 * padding_ratio))
+            avail_h = int(final_h * (1.0 - 2 * padding_ratio))
 
-        # 7. Render background & composition
-        final_canvas = cls._compose_background(
-            cutout=resized_cutout,
-            canvas_w=final_w,
-            canvas_h=final_h,
-            pos_x=pos_x,
-            pos_y=pos_y,
-            style=background_style,
-            custom_hex=custom_bg_color,
-        )
-        steps_applied.append(f"Composed background style '{background_style}'")
+            cutout_w, cutout_h = rgba_cutout.size
+            scale = min(avail_w / max(cutout_w, 1), avail_h / max(cutout_h, 1))
+            new_cutout_w = max(1, int(cutout_w * scale))
+            new_cutout_h = max(1, int(cutout_h * scale))
+
+            resized_cutout = rgba_cutout.resize((new_cutout_w, new_cutout_h), Image.Resampling.LANCZOS)
+            steps_applied.append(f"Standardized cutout to {new_cutout_w}x{new_cutout_h} (Canvas: {final_w}x{final_h}, Padding: {padding_percent}%)")
+
+            # Cutout positioning (centered horizontally, grounded vertically)
+            pos_x = (final_w - new_cutout_w) // 2
+            pos_y = (final_h - new_cutout_h) // 2
+
+            # 7. Render background & composition
+            final_canvas = cls._compose_background(
+                cutout=resized_cutout,
+                canvas_w=final_w,
+                canvas_h=final_h,
+                pos_x=pos_x,
+                pos_y=pos_y,
+                style=background_style,
+                custom_hex=custom_bg_color,
+            )
+            steps_applied.append(f"Composed background style '{background_style}'")
 
         # 8. Multi-format export optimization
         fmt = export_format.upper()
         if fmt not in ('JPEG', 'JPG', 'PNG', 'WEBP'):
             fmt = 'JPEG'
-        if background_style == 'transparent' and fmt in ('JPEG', 'JPG'):
+        if ai_mode != 'gemini_edit' and background_style == 'transparent' and fmt in ('JPEG', 'JPG'):
             # JPEG cannot store transparency; automatically switch to PNG
             fmt = 'PNG'
 
@@ -481,7 +497,13 @@ class ImagePipeline:
 
         if fmt in ('JPEG', 'JPG'):
             fmt = 'JPEG'
-            save_img = final_canvas.convert('RGB')
+            if final_canvas.mode in ('RGBA', 'LA'):
+                # Composite onto clean white background to avoid black borders on transparency
+                bg = Image.new('RGB', final_canvas.size, (255, 255, 255))
+                bg.paste(final_canvas, mask=final_canvas.split()[-1])
+                save_img = bg
+            else:
+                save_img = final_canvas.convert('RGB')
             save_kwargs = {
                 'quality': max(10, min(100, export_quality)),
                 'optimize': True,

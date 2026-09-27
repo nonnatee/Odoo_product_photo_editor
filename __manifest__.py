@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Product Photo Editor',
-    'version': '19.0.1.0.2',
+    'version': '19.0.1.0.3',
     'summary': 'AI-Powered Product Photo Editing & Optimization Connector and Workflow',
     'sequence': 10,
     'description': """

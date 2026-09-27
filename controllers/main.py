@@ -101,7 +101,7 @@ class ProductPhotoEditorController(http.Controller):
             export_quality = int(payload.get('export_quality') or (preset_rec.export_quality if preset_rec else 90))
             padding_percent = float(payload.get('padding_percent') if payload.get('padding_percent') is not None else (preset_rec.padding_percent if preset_rec else 8.0))
             prompt_instruction = payload.get('prompt_instruction') or (preset_rec.prompt_instruction if preset_rec else None)
-            ai_mode = payload.get('ai_mode') or (preset_rec.ai_mode if preset_rec else 'gemini_edit')
+            ai_mode = payload.get('ai_mode') or (preset_rec.ai_mode if preset_rec else ('gemini_edit' if prompt_instruction else 'cutout_only'))
 
             apply_perspective = str(payload.get('apply_perspective', preset_rec.apply_perspective if preset_rec else 'true')).lower() in ('true', '1')
             apply_color_correction = str(payload.get('apply_color_correction', preset_rec.apply_color_correction if preset_rec else 'true')).lower() in ('true', '1')

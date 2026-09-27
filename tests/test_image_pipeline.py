@@ -376,6 +376,46 @@ class TestImagePipeline(unittest.TestCase):
         self.assertEqual(res['width'], 1000)
         self.assertTrue(any("fallback from remove.bg" in s for s in res['steps_applied']))
 
+    def test_19_gemini_edit_offloaded_bypasses_all_procedural_params(self):
+        """
+        Verify that in 'gemini_edit' mode, all other parameters (AI engine,
+        background style, dimensions, padding, CV filters) do not affect output,
+        since the entire process is offloaded to the external service.
+        """
+        res = ImagePipeline.process_image(
+            image_bytes=self.sample_image_bytes,
+            ai_mode='gemini_edit',
+            prompt_instruction='Studio minimal product photo on pure white with subtle shadow',
+            service_provider='rembg',
+            background_style='custom_color',
+            custom_bg_color='#FF00FF',
+            dimensions='square_2000',
+            target_width=4000,
+            target_height=4000,
+            padding_percent=30.0,
+            apply_perspective=True,
+            apply_color_correction=True,
+            apply_auto_white_balance=True,
+            apply_contrast_enhancement=True,
+            apply_sharpening=True,
+            export_format='PNG',
+        )
+
+        # Output dimensions remain original/Gemini size (400x300), NOT square_2000 or 4000x4000
+        self.assertEqual(res['width'], self.img_w)
+        self.assertEqual(res['height'], self.img_h)
+        self.assertEqual(res['format'], 'PNG')
+        self.assertTrue(any("Offloaded to external service" in s for s in res['steps_applied']))
+        self.assertTrue(any("bypassed local background removal" in s for s in res['steps_applied']))
+
+        # Ensure GrabCut/rembg, padding standardization, and compositing did not run
+        self.assertFalse(any("Segmented foreground cutout" in s for s in res['steps_applied']))
+        self.assertFalse(any("Standardized cutout" in s for s in res['steps_applied']))
+        self.assertFalse(any("Composed background" in s for s in res['steps_applied']))
+        self.assertFalse(any("Applied perspective" in s for s in res['steps_applied']))
+        self.assertFalse(any("white balance" in s for s in res['steps_applied']))
+
 
 if __name__ == '__main__':
     unittest.main()
+

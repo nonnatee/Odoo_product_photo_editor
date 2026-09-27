@@ -251,10 +251,46 @@ class TestPresetsAndQuickActions(unittest.TestCase):
 
         self.assertIn('image_bytes', res)
         self.assertEqual(res['format'], 'JPEG')
-        self.assertEqual(res['width'], 1000)
-        self.assertEqual(res['height'], 1000)
-        self.assertTrue(any("Applied AI instruction edit" in s for s in res['steps_applied']))
-        self.assertTrue(any("Composed background" in s for s in res['steps_applied']))
+        # In gemini_edit mode, all processing is offloaded to the external service.
+        # Dimensions, background removal, and compositing do NOT affect the output.
+        self.assertEqual(res['width'], self.img_w)
+        self.assertEqual(res['height'], self.img_h)
+        self.assertTrue(any("Offloaded to external service" in s for s in res['steps_applied']))
+        self.assertTrue(any("bypassed local background removal" in s for s in res['steps_applied']))
+        self.assertFalse(any("Composed background" in s for s in res['steps_applied']))
+        self.assertFalse(any("Segmented foreground cutout" in s for s in res['steps_applied']))
+
+    def test_07b_gemini_edit_ignores_all_procedural_params(self):
+        """Verify that when ai_mode is gemini_edit, bg, dimensions, AI engine, and CV filters do not affect output."""
+        res = ImagePipeline.process_image(
+            image_bytes=self.sample_image_bytes,
+            prompt_instruction="Clean catalog look",
+            ai_mode="gemini_edit",
+            background_style="transparent",
+            custom_bg_color="#00FF00",
+            dimensions="square_2000",
+            target_width=3000,
+            target_height=3000,
+            padding_percent=25.0,
+            service_provider="rembg",
+            apply_perspective=True,
+            apply_color_correction=True,
+            apply_auto_white_balance=True,
+            apply_contrast_enhancement=True,
+            apply_sharpening=True,
+            export_format="JPEG",
+        )
+
+        # Output dimensions must remain source/Gemini dimensions, NOT square_2000 or 3000x3000
+        self.assertEqual(res['width'], self.img_w)
+        self.assertEqual(res['height'], self.img_h)
+        self.assertTrue(any("Offloaded to external service" in s for s in res['steps_applied']))
+        # Verify procedural steps were bypassed
+        self.assertFalse(any("Segmented foreground cutout" in s for s in res['steps_applied']))
+        self.assertFalse(any("Standardized cutout" in s for s in res['steps_applied']))
+        self.assertFalse(any("Composed background" in s for s in res['steps_applied']))
+        self.assertFalse(any("Applied perspective" in s for s in res['steps_applied']))
+        self.assertFalse(any("white balance" in s for s in res['steps_applied']))
 
     # -------------------------------------------------------------------------
     # 7. Quick Confirmation Wizard & Workflow Logic
