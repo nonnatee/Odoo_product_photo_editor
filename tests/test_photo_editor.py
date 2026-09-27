@@ -270,6 +270,42 @@ class TestPhotoEditorModelStandalone(unittest.TestCase):
             ImagePipeline.process_image(image_bytes=b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>')
         self.assertTrue("SVG" in str(ctx_svg.exception) or "cairosvg" in str(ctx_svg.exception))
 
+    def test_09_image_pipeline_opencv_fallback(self):
+        """When PIL.Image.open fails on an image (e.g. missing format codec), OpenCV fallback decodes it."""
+        from unittest.mock import patch
+        from PIL import UnidentifiedImageError
+        from models.image_pipeline import ImagePipeline
+
+        img = Image.new('RGB', (60, 60), color=(100, 150, 200))
+        buf = io.BytesIO()
+        img.save(buf, format='WEBP')
+        webp_bytes = buf.getvalue()
+
+        real_open = Image.open
+        def mock_open(fp, *args, **kwargs):
+            content = fp.getvalue() if hasattr(fp, 'getvalue') else None
+            if content == webp_bytes:
+                raise UnidentifiedImageError('Mock failure in Pillow')
+            return real_open(fp, *args, **kwargs)
+
+        with patch('PIL.Image.open', side_effect=mock_open):
+            result = ImagePipeline.process_image(image_bytes=webp_bytes, dimensions='square_1000')
+            self.assertEqual(result['width'], 1000)
+            self.assertEqual(result['height'], 1000)
+
+    def test_10_image_pipeline_raw_base64_input(self):
+        """ImagePipeline automatically detects and unwraps raw Base64 bytes passed to image_bytes."""
+        from models.image_pipeline import ImagePipeline
+
+        img = Image.new('RGB', (50, 50), color=(30, 60, 90))
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG')
+        b64_bytes = base64.b64encode(buf.getvalue())
+
+        result = ImagePipeline.process_image(image_bytes=b64_bytes, dimensions='square_1000')
+        self.assertEqual(result['width'], 1000)
+        self.assertEqual(result['height'], 1000)
+
 
 if __name__ == '__main__':
     unittest.main()

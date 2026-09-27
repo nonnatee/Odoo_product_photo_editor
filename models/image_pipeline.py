@@ -22,7 +22,17 @@ from typing import Dict, Any, Optional, Tuple
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageOps, ImageFile
+
+# Ensure truncated or slightly corrupted images can still be loaded
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    pillow_heif.register_avif_opener()
+except Exception:
+    pass
 
 try:
     from google import genai
@@ -113,22 +123,85 @@ class ImagePipeline:
             return data
 
     @classmethod
+    def _cv2_to_pil(cls, cv_img: np.ndarray) -> Image.Image:
+        """Convert an OpenCV BGR/BGRA/Grayscale ndarray to a PIL Image."""
+        if len(cv_img.shape) == 2:
+            return Image.fromarray(cv_img, mode='L')
+        elif cv_img.shape[2] == 4:
+            rgba = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
+            return Image.fromarray(rgba, mode='RGBA')
+        elif cv_img.shape[2] == 3:
+            rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            return Image.fromarray(rgb, mode='RGB')
+        raise ValueError(f"Unsupported image array shape: {cv_img.shape}")
+
+    @classmethod
     def _handle_unidentified_image(cls, image_bytes: bytes, original_error: Exception) -> Tuple[Image.Image, bytes]:
-        """Inspects unidentifiable image bytes, attempts format conversion (SVG/HEIC/AVIF),
+        """Inspects unidentifiable image bytes, attempts format conversion (OpenCV/SVG/HEIC/AVIF/Base64),
         or raises a descriptive ImagePipelineError explaining the exact issue to the user."""
         if not image_bytes:
             raise ImagePipelineError("No image data provided for processing.")
 
         stripped = image_bytes.lstrip()
 
-        # Check for HTML / Error responses
+        # 1. First fallback: Try OpenCV (cv2.imdecode) which handles WebP, TIFF, BMP, and tricky JPEGs
+        try:
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            cv_img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+            if cv_img is not None and cv_img.size > 0:
+                pil_img = cls._cv2_to_pil(cv_img)
+                # Re-encode to standard PNG bytes for pipeline consistency
+                buf = io.BytesIO()
+                pil_img.save(buf, format='PNG')
+                return pil_img, buf.getvalue()
+        except Exception as cv_err:
+            _logger.debug("OpenCV fallback decode failed: %s", cv_err)
+
+        # 2. Check if image_bytes is actually still Base64 encoded
+        # Common when double-encoded or containing URL-encoded characters / data-URIs
+        is_b64 = (
+            stripped.startswith((b'/9j/', b'iVBO', b'R0lG', b'UklG', b'Qk', b'data:')) or
+            b';base64,' in stripped[:128] or
+            (len(stripped) > 20 and all(c in b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\r\n\t %-_' for c in stripped[:min(len(stripped), 512)]))
+        )
+        if is_b64:
+            try:
+                from .photo_editor import _clean_and_b64decode
+                # If data-URI prefix present, strip it
+                b64_candidate = stripped
+                if b';base64,' in b64_candidate:
+                    b64_candidate = b64_candidate.split(b';base64,', 1)[1]
+                elif b',' in b64_candidate[:128]:
+                    b64_candidate = b64_candidate.split(b',', 1)[1]
+                recovered = _clean_and_b64decode(b64_candidate)
+                if recovered and recovered != image_bytes:
+                    try:
+                        pil_img = Image.open(io.BytesIO(recovered))
+                        return pil_img, recovered
+                    except Exception:
+                        pass
+                    # Also try OpenCV on the recovered bytes
+                    try:
+                        nparr = np.frombuffer(recovered, np.uint8)
+                        cv_img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+                        if cv_img is not None and cv_img.size > 0:
+                            pil_img = cls._cv2_to_pil(cv_img)
+                            buf = io.BytesIO()
+                            pil_img.save(buf, format='PNG')
+                            return pil_img, buf.getvalue()
+                    except Exception:
+                        pass
+            except Exception as b64_err:
+                _logger.debug("Base64 re-decode attempt failed: %s", b64_err)
+
+        # 3. Check for HTML / Error responses
         if stripped.startswith((b'<!DOCTYPE', b'<!doctype', b'<html', b'<HTML', b'<head')):
             raise ImagePipelineError(
                 "The product image field contains an HTML document (typically from a failed image download "
                 "or 404/500 web response) rather than a valid image. Please re-upload a valid photo."
             )
 
-        # Check for URL strings
+        # 4. Check for URL strings
         if stripped.startswith((b'http://', b'https://')):
             url_str = stripped[:100].decode('utf-8', errors='ignore')
             raise ImagePipelineError(
@@ -136,7 +209,7 @@ class ImagePipeline:
                 "Please upload the actual image file to the product."
             )
 
-        # Check for SVG vector graphics
+        # 5. Check for SVG vector graphics
         if stripped.startswith((b'<svg', b'<?xml')) or b'<svg' in stripped[:300]:
             try:
                 import cairosvg
@@ -152,48 +225,37 @@ class ImagePipeline:
             except Exception as e:
                 raise ImagePipelineError(f"Failed to convert SVG image to PNG: {e}")
 
-        # Check for HEIC / HEIF (Apple iPhone photos)
-        is_heic = len(image_bytes) > 12 and (
-            image_bytes[4:8] == b'ftyp' and any(b in image_bytes[8:24] for b in (b'heic', b'heix', b'hevc', b'mif1', b'msf1'))
+        # 6. Check for HEIC / HEIF / AVIF
+        is_heic_or_avif = (
+            (len(image_bytes) > 12 and image_bytes[4:8] == b'ftyp') or
+            any(sig in image_bytes[:32] for sig in (b'heic', b'heix', b'hevc', b'mif1', b'msf1', b'avif'))
         )
-        if is_heic:
+        if is_heic_or_avif:
             try:
                 import pillow_heif
                 pillow_heif.register_heif_opener()
-                img = Image.open(io.BytesIO(image_bytes))
-                return img, image_bytes
-            except ImportError:
-                raise ImagePipelineError(
-                    "The product photo is in HEIC/HEIF format (Apple iPhone photo). "
-                    "Pillow cannot decode HEIC directly without 'pillow-heif'. "
-                    "Please install 'pillow-heif' on the Odoo server ('pip install pillow-heif') "
-                    "or convert the photo to JPEG or PNG before uploading."
-                )
-            except Exception as e:
-                raise ImagePipelineError(f"Failed to decode HEIC image: {e}")
-
-        # Check for AVIF images
-        is_avif = len(image_bytes) > 12 and (
-            image_bytes[4:8] == b'ftyp' and b'avif' in image_bytes[8:24]
-        )
-        if is_avif:
-            try:
-                import pillow_heif
                 pillow_heif.register_avif_opener()
                 img = Image.open(io.BytesIO(image_bytes))
                 return img, image_bytes
             except ImportError:
+                fmt_name = "AVIF" if b'avif' in image_bytes[:32] else "HEIC/HEIF"
                 raise ImagePipelineError(
-                    "The product photo is in AVIF format. To process AVIF images, "
-                    "please install 'pillow-heif' on the Odoo server ('pip install pillow-heif') "
-                    "or convert the photo to JPEG or PNG before uploading."
+                    f"The product photo is in {fmt_name} format. Pillow cannot decode it "
+                    "without 'pillow-heif'. Please install 'pillow-heif' on the Odoo server "
+                    "('pip install pillow-heif') or upload the photo in JPEG, PNG, or WebP format."
                 )
             except Exception as e:
-                raise ImagePipelineError(f"Failed to decode AVIF image: {e}")
+                raise ImagePipelineError(f"Failed to decode HEIC/AVIF image: {e}")
 
-        # Default fallback
+        # 7. Default fallback with diagnostic context
+        header_repr = repr(image_bytes[:24])
+        size_kb = len(image_bytes) / 1024.0
+        _logger.error(
+            "Unidentified image format. Size: %.1f KB, Header (repr): %s, Header (hex): %s",
+            size_kb, header_repr, image_bytes[:24].hex()
+        )
         raise ImagePipelineError(
-            f"Failed to decode input image: {original_error}. "
+            f"Failed to decode input image [Header: {header_repr}, Size: {size_kb:.1f} KB]: {original_error}. "
             "Please ensure the product has a valid image in JPEG, PNG, or WebP format."
         )
 

@@ -35,18 +35,32 @@ def _clean_and_b64decode(b64_bytes: bytes) -> bytes:
     """Safely decode base64 bytes handling whitespace, line breaks, padding, and url-safe chars."""
     if not b64_bytes:
         return b''
+    # If URL-encoded, unquote first
+    if b'%' in b64_bytes[:64]:
+        try:
+            import urllib.parse
+            b64_bytes = urllib.parse.unquote_to_bytes(b64_bytes)
+        except Exception:
+            pass
     # Strip whitespace, newlines, tabs, and surrounding quotes
     cleaned = re.sub(rb'[\s\r\n\"\'\t]+', b'', b64_bytes)
     # Translate URL-safe base64 characters
     cleaned = cleaned.replace(b'-', b'+').replace(b'_', b'/')
     # Pad to multiple of 4
-    missing_padding = len(cleaned) % 4
-    if missing_padding:
-        cleaned += b'=' * (4 - missing_padding)
+    rem = len(cleaned) % 4
+    if rem == 1:
+        # A single trailing character cannot form a base64 block; trim it
+        cleaned = cleaned[:-1]
+    elif rem in (2, 3):
+        cleaned += b'=' * (4 - rem)
     try:
         return base64.b64decode(cleaned)
     except Exception:
-        return b64_bytes
+        try:
+            import binascii
+            return binascii.a2b_base64(cleaned)
+        except Exception:
+            return b64_bytes
 
 
 def _safe_b64decode(data):
@@ -73,6 +87,12 @@ def _safe_b64decode(data):
     # 2. Extract payload if data-URI or string
     if isinstance(data, str):
         data = data.strip().strip('"\'')
+        if '%' in data[:32]:
+            try:
+                import urllib.parse
+                data = urllib.parse.unquote(data)
+            except Exception:
+                pass
         if data.startswith('data:'):
             is_explicit_data_uri = True
             if ';base64,' in data:
