@@ -60,6 +60,13 @@ class ProductTemplate(models.Model):
             'default_dimensions': def_dim,
         })
 
+        # Prefill Studio Minimal preset by default
+        studio_preset = self.env['product.photo.editor.preset'].search([('code', '=', 'studio_minimal')], limit=1)
+        if studio_preset:
+            context['default_preset_id'] = studio_preset.id
+            if studio_preset.prompt_instruction:
+                context['default_prompt_instruction'] = studio_preset.prompt_instruction
+
         return {
             'name': _('AI Product Photo Editor'),
             'type': 'ir.actions.act_window',

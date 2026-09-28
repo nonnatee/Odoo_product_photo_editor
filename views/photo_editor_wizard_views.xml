@@ -23,7 +23,7 @@
                             <group string="AI Pipeline Mode">
                                 <field name="ai_mode"/>
                                 <field name="gemini_model" invisible="ai_mode not in ('gemini_edit', 'expand')"/>
-                                <field name="prompt_instruction" invisible="ai_mode not in ('gemini_edit', 'expand')" required="ai_mode == 'gemini_edit'" placeholder="e.g. Clean studio minimal e-commerce lighting with grounding shadow..."/>
+                                <field name="prompt_instruction" invisible="ai_mode == 'cutout_only'" placeholder="e.g. Clean studio minimal e-commerce lighting with grounding shadow..." rows="3"/>
                             </group>
 
                             <div class="alert alert-info py-2 px-3 small my-2" invisible="ai_mode != 'gemini_edit'">

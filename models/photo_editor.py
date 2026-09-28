@@ -205,8 +205,15 @@ class ProductPhotoEditor(models.Model):
         ondelete='set null',
         help="Preset profile applied to this photo editing job.",
     )
+    DEFAULT_PROMPT_INSTRUCTION = (
+        "Convert this product photo into a clean, studio-minimal e-commerce image. "
+        "Apply even commercial studio lighting, eliminate dust, blemishes and clutter, "
+        "ground the product with a natural soft contact shadow, and ensure color fidelity against pure white."
+    )
+
     prompt_instruction = fields.Text(
         string='Nano Banana 2 Prompt Instruction',
+        default=DEFAULT_PROMPT_INSTRUCTION,
         help="Natural language prompt instruction for Google Nano Banana 2 (Gemini 3.1 Flash Image) instruction editing and relighting.",
     )
     ai_mode = fields.Selection([

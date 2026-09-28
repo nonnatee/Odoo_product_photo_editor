@@ -707,6 +707,42 @@ class TestPresetsAndQuickActions(unittest.TestCase):
             self.assertEqual(call_kwargs['prompt_instruction'], "Clean studio minimal lighting")
             self.assertEqual(call_kwargs['ai_mode'], "gemini_edit")
 
+    # -------------------------------------------------------------------------
+    # 13. Prompt Instruction Validation & Robust Studio Execution
+    # -------------------------------------------------------------------------
+    def test_21_prompt_instruction_defaults_and_pipeline_execution(self):
+        """Validate default prompt instruction presence and offload execution in gemini_edit mode."""
+        from wizard.photo_editor_wizard import ProductPhotoEditorWizard
+
+        # Wizard model has DEFAULT_PROMPT_INSTRUCTION
+        self.assertTrue(hasattr(ProductPhotoEditorWizard, 'DEFAULT_PROMPT_INSTRUCTION'))
+        self.assertIn("studio-minimal", ProductPhotoEditorWizard.DEFAULT_PROMPT_INSTRUCTION)
+
+        # ImagePipeline has DEFAULT_STUDIO_PROMPT
+        self.assertTrue(hasattr(ImagePipeline, 'DEFAULT_STUDIO_PROMPT'))
+        self.assertIn("clean, studio-minimal", ImagePipeline.DEFAULT_STUDIO_PROMPT)
+
+        # Verify pipeline execution with default studio prompt when prompt_instruction is empty
+        res = ImagePipeline.process_image(
+            image_bytes=self.sample_image_bytes,
+            ai_mode='gemini_edit',
+            prompt_instruction=None,
+        )
+        self.assertIn('image_bytes', res)
+        self.assertEqual(res['format'], 'JPEG')
+        self.assertTrue(any("Offloaded to external service" in s for s in res['steps_applied']))
+
+    def test_22_procedural_studio_fallback_with_shadow(self):
+        """Verify procedural_instruction_edit executes studio compositing with soft shadow on prompt."""
+        prompt = "Convert this product photo into a clean, studio-minimal e-commerce image with natural soft contact shadow."
+        edited = ImagePipeline.procedural_instruction_edit(
+            image_bytes=self.sample_image_bytes,
+            prompt=prompt,
+        )
+        self.assertTrue(len(edited) > 0)
+        im = Image.open(io.BytesIO(edited))
+        self.assertEqual(im.size, (self.img_w, self.img_h))
+
 
 if __name__ == '__main__':
     unittest.main()

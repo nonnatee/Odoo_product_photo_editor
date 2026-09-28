@@ -79,6 +79,12 @@ class ImagePipelineError(Exception):
 class ImagePipeline:
     """Core image processing pipeline for e-commerce product photos."""
 
+    DEFAULT_STUDIO_PROMPT = (
+        "Convert this product photo into a clean, studio-minimal e-commerce image. "
+        "Apply even commercial studio lighting, eliminate dust, blemishes and clutter, "
+        "ground the product with a natural soft contact shadow, and ensure color fidelity against pure white."
+    )
+
     # Dimension preset definitions (width, height)
     DIMENSION_PRESETS = {
         'square_2000': (2000, 2000),      # Marketplace standard (Amazon, Shopify, eBay)
@@ -333,7 +339,7 @@ class ImagePipeline:
         # canvas dimension presets/padding, and CV filters do not affect output.
         # ---------------------------------------------------------------------
         if ai_mode == 'gemini_edit':
-            prompt = (prompt_instruction or "").strip() or "Clean studio minimal e-commerce lighting with subtle grounding shadow on crisp white background"
+            prompt = (prompt_instruction or "").strip() or cls.DEFAULT_STUDIO_PROMPT
             try:
                 edited_bytes, edit_provider = cls.gemini_instruction_edit(
                     image_bytes=image_bytes,
@@ -350,9 +356,15 @@ class ImagePipeline:
                 final_w, final_h = pil_img.size
                 steps_applied.append(f"Offloaded to external service: AI instruction edit via {edit_provider}")
             except Exception as e:
-                _logger.warning("Instruction edit encountered issue, continuing with source image: %s", e)
-                final_w, final_h = orig_w, orig_h
-                steps_applied.append(f"External service issue ({e}); preserved source image")
+                _logger.warning("Instruction edit encountered issue, executing procedural studio fallback: %s", e)
+                edited_bytes = cls.procedural_instruction_edit(image_bytes=image_bytes, prompt=prompt)
+                pil_img = Image.open(io.BytesIO(edited_bytes))
+                try:
+                    pil_img = ImageOps.exif_transpose(pil_img)
+                except Exception:
+                    pass
+                final_w, final_h = pil_img.size
+                steps_applied.append(f"External service issue ({e}); applied procedural studio fallback")
 
             steps_applied.append("External AI mode: bypassed local background removal, canvas dimension presets, and CV filters")
             final_canvas = pil_img
@@ -696,12 +708,13 @@ class ImagePipeline:
         cls,
         rgb_pil: Image.Image,
         image_bytes_orig: bytes,
-        provider: str,
-        config: Dict[str, Any],
+        provider: str = 'local',
+        config: Optional[Dict[str, Any]] = None,
         has_existing_alpha: bool = False,
         existing_alpha_channel: Optional[Image.Image] = None,
     ) -> Tuple[Image.Image, str]:
         """Dispatches foreground segmentation to requested provider or local fallback."""
+        config = config or {}
         if has_existing_alpha and existing_alpha_channel and provider == 'local':
             if existing_alpha_channel.size != rgb_pil.size:
                 existing_alpha_channel = existing_alpha_channel.resize(rgb_pil.size, Image.Resampling.LANCZOS)
@@ -961,8 +974,8 @@ class ImagePipeline:
         canvas_h: int,
         pos_x: int,
         pos_y: int,
-        style: str,
-        custom_hex: str,
+        style: str = 'white',
+        custom_hex: str = '#FFFFFF',
     ) -> Image.Image:
         """Composes cutout onto requested background with optional realistic drop shadows."""
         cutout_w, cutout_h = cutout.size
@@ -1214,7 +1227,9 @@ class ImagePipeline:
             for candidate in candidates:
                 content = candidate.get("content") or {}
                 parts = content.get("parts") or []
-                for part in parts:
+                for part in reversed(parts):
+                    if part.get("thought"):
+                        continue
                     inline = part.get("inline_data") or part.get("inlineData")
                     if inline and "data" in inline:
                         b64_data = inline["data"]
@@ -1223,6 +1238,12 @@ class ImagePipeline:
             block_reason = response.get("promptFeedback", {}).get("blockReason")
             if block_reason:
                 raise ValueError(f"Gemini generation blocked: {block_reason}")
+            # If text response was returned, inspect it
+            for candidate in candidates:
+                content = candidate.get("content") or {}
+                for part in content.get("parts") or []:
+                    if part.get("text"):
+                        raise ValueError(f"Gemini returned message: {part['text'][:200]}")
             raise ValueError("No image data found in Gemini REST response.")
 
         # 2. SDK response object output_image attribute
@@ -1235,41 +1256,35 @@ class ImagePipeline:
                 return data
 
         # 3. SDK response parts
+        parts_list = []
         if hasattr(response, "parts") and response.parts:
-            for part in response.parts:
-                if hasattr(part, "as_image") and callable(part.as_image):
-                    try:
-                        img = part.as_image()
-                        if img:
-                            out = io.BytesIO()
-                            img.save(out, format="PNG")
-                            return out.getvalue()
-                    except Exception:
-                        pass
-                if hasattr(part, "inline_data") and part.inline_data:
-                    data = part.inline_data.data
-                    if isinstance(data, str):
-                        return base64.b64decode(data)
-                    return data
-
+            parts_list.extend(response.parts)
         if hasattr(response, "candidates") and response.candidates:
             for candidate in response.candidates:
                 if hasattr(candidate, "content") and hasattr(candidate.content, "parts"):
-                    for part in candidate.content.parts:
-                        if hasattr(part, "as_image") and callable(part.as_image):
-                            try:
-                                img = part.as_image()
-                                if img:
-                                    out = io.BytesIO()
-                                    img.save(out, format="PNG")
-                                    return out.getvalue()
-                            except Exception:
-                                pass
-                        if hasattr(part, "inline_data") and part.inline_data:
-                            data = part.inline_data.data
-                            if isinstance(data, str):
-                                return base64.b64decode(data)
-                            return data
+                    parts_list.extend(candidate.content.parts)
+
+        for part in reversed(parts_list):
+            if getattr(part, "thought", False):
+                continue
+            if hasattr(part, "as_image") and callable(part.as_image):
+                try:
+                    img = part.as_image()
+                    if img:
+                        out = io.BytesIO()
+                        img.save(out, format="PNG")
+                        return out.getvalue()
+                except Exception:
+                    pass
+            if hasattr(part, "inline_data") and part.inline_data:
+                data = part.inline_data.data
+                if isinstance(data, str):
+                    return base64.b64decode(data)
+                return data
+
+        for part in parts_list:
+            if hasattr(part, "text") and part.text:
+                raise ValueError(f"Gemini returned text message: {part.text[:200]}")
 
         raise ValueError("No image data found in Gemini response.")
 
@@ -1286,15 +1301,33 @@ class ImagePipeline:
         if not requests:
             raise ImagePipelineError("requests library is required for Gemini REST API calls.")
 
+        mime_type = "image/jpeg"
+        if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime_type = "image/png"
+        elif image_bytes.startswith(b"RIFF") and b"WEBP" in image_bytes[:12]:
+            mime_type = "image/webp"
+        elif image_bytes.startswith(b"\xff\xd8\xff"):
+            mime_type = "image/jpeg"
+        else:
+            try:
+                im = Image.open(io.BytesIO(image_bytes))
+                fmt = (im.format or "").upper()
+                if fmt == "PNG":
+                    mime_type = "image/png"
+                elif fmt == "WEBP":
+                    mime_type = "image/webp"
+            except Exception:
+                pass
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         parts = [
-            {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(image_bytes).decode("ascii")}}
+            {"text": f"Instruction-based product photo editing task: {prompt}. Preserve product structure, identity, and realistic textures."},
+            {"inlineData": {"mimeType": mime_type, "data": base64.b64encode(image_bytes).decode("ascii")}}
         ]
         if mask_bytes:
             parts.append(
                 {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(mask_bytes).decode("ascii")}}
             )
-        parts.append({"text": prompt})
 
         payload = {
             "contents": [{"parts": parts}],
@@ -1302,9 +1335,13 @@ class ImagePipeline:
                 "responseModalities": ["TEXT", "IMAGE"],
             }
         }
-        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        }
+        resp = requests.post(url, json=payload, headers=headers, timeout=60)
         if resp.status_code != 200:
-            raise ImagePipelineError(f"Gemini REST API error [{resp.status_code}]: {resp.text[:200]}")
+            raise ImagePipelineError(f"Gemini REST API error [{resp.status_code}]: {resp.text[:300]}")
         data = resp.json()
         return cls._extract_gemini_image(data)
 
@@ -1391,6 +1428,42 @@ class ImagePipeline:
         else:
             final_rgb = transformed_pil
 
+        # Smart procedural studio composition when prompt requests white / studio / shadow / clean
+        wants_studio_bg = any(k in p for k in [
+            "white", "studio", "clean", "shadow", "e-commerce", "ecommerce",
+            "cutout", "remove background", "catalog", "neutral", "grounding", "lighting"
+        ])
+        if wants_studio_bg and not mask_bytes:
+            try:
+                cutout, _ = cls._remove_background(
+                    rgb_pil=final_rgb,
+                    image_bytes_orig=image_bytes,
+                    provider="local",
+                )
+                cw, ch = final_rgb.size
+                style = "studio_soft_shadow" if any(k in p for k in ["shadow", "studio", "e-commerce", "ecommerce", "grounding"]) else "white"
+                if "grey" in p or "neutral" in p:
+                    style = "studio_neutral"
+                elif "transparent" in p or "alpha" in p:
+                    style = "transparent"
+
+                cutout_w, cutout_h = cutout.size
+                pos_x = (cw - cutout_w) // 2
+                pos_y = (ch - cutout_h) // 2
+                composed = cls._compose_background(
+                    cutout=cutout,
+                    canvas_w=cw,
+                    canvas_h=ch,
+                    pos_x=pos_x,
+                    pos_y=pos_y,
+                    style=style,
+                )
+                out_io = io.BytesIO()
+                composed.save(out_io, format="PNG")
+                return out_io.getvalue()
+            except Exception as e:
+                _logger.warning("Procedural studio background composition fallback issue: %s", e)
+
         if has_alpha and alpha_channel:
             final_rgba = final_rgb.convert("RGBA")
             final_rgba.putalpha(alpha_channel)
@@ -1423,22 +1496,21 @@ class ImagePipeline:
                     client = genai.Client(api_key=api_key)
                     orig_pil = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
                     orig_rgb = orig_pil.convert("RGB")
-                    contents = [orig_rgb]
                     if mask_bytes:
                         mask_pil = cls.extract_mask_pil(mask_bytes)
                         if mask_pil.size != orig_pil.size:
                             mask_pil = mask_pil.resize(orig_pil.size, Image.Resampling.NEAREST)
-                        contents.append(mask_pil.convert("RGB"))
                         task_prompt = (
                             f"Instruction-based image editing task: Modify the masked region according to: '{prompt}'. "
                             f"Preserve all unmasked areas, ambient lighting, shadows, and perspective."
                         )
+                        contents = [task_prompt, orig_rgb, mask_pil.convert("RGB")]
                     else:
                         task_prompt = (
                             f"Instruction-based product photo editing task: '{prompt}'. "
                             f"Preserve product structure, identity, and realistic textures."
                         )
-                    contents.append(task_prompt)
+                        contents = [task_prompt, orig_rgb]
                     config = genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]) if genai_types else None
                     response = client.models.generate_content(
                         model=model,
@@ -1448,7 +1520,7 @@ class ImagePipeline:
                     gen_bytes = cls._extract_gemini_image(response)
                     return gen_bytes, f"{model_display} (google-genai SDK)"
                 except Exception as e:
-                    _logger.info("google-genai SDK failed (%s), attempting REST fallback", e)
+                    _logger.warning("google-genai SDK failed (%s), attempting REST fallback", e)
 
             try:
                 gen_bytes = cls._call_gemini_rest(
@@ -1460,7 +1532,7 @@ class ImagePipeline:
                 )
                 return gen_bytes, f"{model_display} (Direct REST API)"
             except Exception as e:
-                _logger.info("Gemini REST API failed (%s), falling back to local procedural engine", e)
+                _logger.warning("Gemini REST API failed (%s), falling back to local procedural engine", e)
 
         proc_bytes = cls.procedural_instruction_edit(image_bytes, prompt, mask_bytes)
         return proc_bytes, "Local Procedural Engine (OpenCV / PIL)"
