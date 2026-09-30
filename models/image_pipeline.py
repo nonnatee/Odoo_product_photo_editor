@@ -1489,7 +1489,7 @@ class ImagePipeline:
         Falls back to direct REST API if SDK fails, and to procedural OpenCV if no key is set.
         Returns tuple of (processed_bytes, provider_description).
         """
-        model_display = "Nano Banana 2 (gemini-3.1-flash-image)" if model == "gemini-3.1-flash-image" else model
+        model_display = "Gemini 3.1 Flash Image" if model == "gemini-3.1-flash-image" else model
         if api_key:
             if _GENAI_AVAILABLE and genai is not None:
                 try:

@@ -91,21 +91,21 @@ class ProductPhotoEditorWizard(models.TransientModel):
     )
 
     prompt_instruction = fields.Text(
-        string='Nano Banana 2 Prompt Instruction',
+        string='Gemini 3.1 Flash Image Prompt Instruction',
         default=DEFAULT_PROMPT_INSTRUCTION,
-        help="Natural language prompt instruction for Google Nano Banana 2 (Gemini 3.1 Flash Image) editing and lighting.",
+        help="Natural language prompt instruction for Google Gemini 3.1 Flash Image editing and lighting.",
     )
     ai_mode = fields.Selection([
-        ('gemini_edit', 'Nano Banana 2 (Gemini AI Instruct & Relight)'),
+        ('gemini_edit', 'Gemini 3.1 Flash Image (AI Instruct & Relight)'),
         ('cutout_only', 'Foreground Cutout Only (Local/rembg)'),
         ('expand', 'Generative Canvas Expand'),
         ('opencv_only', 'Procedural Computer Vision (Offline)'),
     ], string='AI Pipeline Mode', default='gemini_edit')
 
     gemini_model = fields.Selection([
-        ('gemini-3.1-flash-image', 'Nano Banana 2 (Gemini 3.1 Flash Image - Recommended)'),
-        ('gemini-3.1-flash-lite-image', 'Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)'),
-        ('gemini-3-pro-image', 'Nano Banana Pro (Gemini 3 Pro Image)'),
+        ('gemini-3.1-flash-image', 'Gemini 3.1 Flash Image (Recommended)'),
+        ('gemini-3.1-flash-lite-image', 'Gemini 3.1 Flash Lite Image'),
+        ('gemini-3-pro-image', 'Gemini 3 Pro Image'),
         ('gemini-3.8-flash', 'Gemini 3.8 Flash'),
     ], string='Gemini Model', default='gemini-3.1-flash-image')
 

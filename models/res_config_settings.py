@@ -37,9 +37,9 @@ class ResConfigSettings(models.TransientModel):
     )
     photo_editor_gemini_model = fields.Selection(
         [
-            ('gemini-3.1-flash-image', 'Nano Banana 2 (Gemini 3.1 Flash Image - Recommended)'),
-            ('gemini-3.1-flash-lite-image', 'Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)'),
-            ('gemini-3-pro-image', 'Nano Banana Pro (Gemini 3 Pro Image)'),
+            ('gemini-3.1-flash-image', 'Gemini 3.1 Flash Image (Recommended)'),
+            ('gemini-3.1-flash-lite-image', 'Gemini 3.1 Flash Lite Image'),
+            ('gemini-3-pro-image', 'Gemini 3 Pro Image'),
             ('gemini-3.8-flash', 'Gemini 3.8 Flash'),
         ],
         string='Gemini AI Model',
